@@ -1,10 +1,10 @@
 {
     "manifest_version": "0.2",
     "name": "obsidian-claude-accenture",
-    "display_name": "Claude + Obsidian (Accenture)",
-    "version": "0.2.0",
-    "description": "Claude Desktop companion for Obsidian vaults. Multi-vault wiki, knowledge ingestion, save-to-vault, autoresearch, canvas. Accenture-friendly distribution.",
-    "long_description": "Claude + Obsidian knowledge companion adapted for Claude Desktop and packaged for Accenture sideloading. Manage one or more Obsidian vaults from the chat: scaffold a vault, ingest sources into structured wiki pages, save conversations as notes, run autoresearch loops, and lay out a visual canvas.\n\nBased on the LLM Wiki pattern by Andrej Karpathy and the upstream `claude-obsidian` Claude Code plugin by AgriciDaniel (https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture). This DXT ports the user-facing surface (commands, skills) to Claude Desktop's MCP primitives.",
+    "display_name": "Obsidian Knowledge Base (Accenture)",
+    "version": "0.3.0",
+    "description": "Build and maintain a personal knowledge base from inside Claude. Drop files into a folder; Claude organizes them into searchable, linked notes. Compatible with Obsidian.",
+    "long_description": "Turn one or more folders into living knowledge bases that Claude builds with you in chat. Drop in PDFs, decks, transcripts, screenshots, or notes — Claude reads them, extracts the key ideas, and files them as structured wiki pages with cross-links. Save conversations as notes, ask the wiki questions in plain English, and let Claude run autonomous research loops that file their own findings.\n\nEach knowledge folder is also a valid Obsidian vault, so you can open it in Obsidian for visual navigation, but Obsidian is not required. Optional features: auto-organize new files the moment you drop them in, and auto-snapshot every change to git so you can roll back.\n\nPackaged for Accenture sideloading. Based on the LLM Wiki pattern by Andrej Karpathy.",
     "author": {
         "name": "Christopher Le",
         "url": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture"
@@ -156,32 +156,32 @@
     "user_config": {
         "vaults": {
             "type": "directory",
-            "title": "Obsidian Vaults",
-            "description": "Directories that are (or will become) Obsidian vaults this extension can manage. Add one per project.",
+            "title": "Knowledge folders",
+            "description": "Pick one or more folders to use as knowledge bases — one per project works well. Whenever you add, change, or remove a file in one of these folders, Claude will automatically update the knowledge base (the `wiki/` subfolder inside) with structured, linked notes. Empty folders are scaffolded for you on first use. Each folder also opens cleanly in Obsidian if you want a visual editor.",
             "multiple": true,
             "required": true,
             "default": []
         },
         "active_vault": {
             "type": "string",
-            "title": "Active vault (optional)",
-            "description": "Folder name of the vault to use by default. Leave empty to use the first configured vault.",
+            "title": "Default folder (optional)",
+            "description": "Name of the folder Claude should use when you don't specify one in chat. Leave blank to default to the first folder above. You can switch any time during a chat with /vault-use.",
             "required": false,
             "default": ""
         },
         "auto_commit": {
             "type": "boolean",
-            "title": "Auto-commit on write",
-            "description": "When the active vault is a git repo, auto-commit wiki/.raw/.vault-meta changes after each write.",
+            "title": "Auto-snapshot changes (git)",
+            "description": "If a knowledge folder is a git repo, Claude saves a snapshot every time it writes a note. Lets you see history and roll back. Safe to leave on.",
             "required": false,
             "default": true
         },
         "auto_watch": {
             "type": "boolean",
-            "title": "Auto-ingest on file change",
-            "description": "Watch each configured vault (excluding wiki/, .obsidian/, .git/, .vault-meta/, .trash/, _templates/, node_modules/) and run `claude -p \"wiki-ingest <relpath>\"` whenever a file is added, changed, or removed. Requires the Claude Code CLI on PATH.",
+            "title": "Auto watch",
+            "description": "When you add, edit, or delete a file in a knowledge folder, Claude immediately reads it and updates the wiki — no need to ask.",
             "required": false,
-            "default": false
+            "default": true
         }
     }
 }
