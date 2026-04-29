@@ -3,6 +3,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ensureVaultExists, kbDir, resolveVault, type VaultConfig } from "../lib/vaults.js";
+import { log } from "../lib/log.js";
 import { textResult } from "./index.js";
 
 export const wikiTools: Tool[] = [
@@ -67,6 +68,7 @@ async function ingest(cfg: VaultConfig, args: Record<string, unknown>) {
   const target = path.join(kbDir(vault), ".raw", source);
   if (!fs.existsSync(target)) throw new Error(`Source not found in obsidian/.raw/: ${source}`);
   const content = await fsp.readFile(target, "utf8");
+  log("wiki_ingest", `${path.basename(vault)} source=${source} (${content.length} chars)`);
   return textResult(`# Source: ${source}\n# Path: obsidian/.raw/${source}\n# Length: ${content.length} chars\n\n${content}`);
 }
 
@@ -83,6 +85,7 @@ async function query(cfg: VaultConfig, args: Record<string, unknown>) {
   const hits: Array<{ file: string; line: number; snippet: string }> = [];
   await scan(wikiDir, vault, q, hits, limit);
 
+  log("wiki_query", `${path.basename(vault)} query="${q}" → ${hits.length} hit(s)`);
   if (hits.length === 0) return textResult(`No matches for "${q}" in obsidian/wiki/`);
   const lines = hits.map((h) => `${h.file}:${h.line}: ${h.snippet}`);
   return textResult(`Matches for "${q}" (${hits.length}):\n\n${lines.join("\n")}`);
@@ -160,6 +163,7 @@ async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
     }
   }
 
+  log("wiki_lint", `${path.basename(vault)} pages=${total} orphans=${orphans.length} broken=${broken.length}`);
   const lines = [
     `# Lint report — ${path.basename(vault)}`,
     `Pages: ${total}`,
