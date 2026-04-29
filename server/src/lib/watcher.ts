@@ -7,7 +7,7 @@ import { ensureKBScaffolded } from "./vaults.js";
 import { resolveClaudeBin } from "./claude-bin.js";
 
 const EXCLUDED_DIRS = new Set([
-  ".obsidian",
+  "obsidian",
   ".git",
   ".trash",
   "_templates",
@@ -28,7 +28,7 @@ const watchers: FSWatcher[] = [];
 const queue: QueueEntry[] = [];
 let running = false;
 
-const LOG_REL = path.join(".obsidian", ".vault-meta", "watcher.log");
+const LOG_REL = path.join("obsidian", ".vault-meta", "watcher.log");
 
 export function watcherLog(vault: string, msg: string): void {
   logLine(vault, msg);
@@ -63,7 +63,7 @@ export function startVaultWatchers(vaults: string[], enabled: boolean): void {
 }
 
 async function setupVault(vault: string): Promise<void> {
-  // Scaffold .obsidian/wiki/, .raw/, .vault-meta/ if not present
+  // Scaffold obsidian/wiki/, .raw/, .vault-meta/ if not present
   try {
     await ensureKBScaffolded(vault);
     logLine(vault, `scaffold ok`);
@@ -168,7 +168,7 @@ const SCOPE_RULE = [
   `STRICT SCOPE: this knowledge base folder is your current working directory. You MUST stay inside it.`,
   `- Do NOT use 'find', 'grep -r', or any command that traverses paths outside the cwd.`,
   `- Do NOT search /Users, $HOME, ~, or any absolute path outside cwd.`,
-  `- Use only relative paths from cwd. The wiki lives at .obsidian/wiki/. Raw sources at .obsidian/.raw/.`,
+  `- Use only relative paths from cwd. The wiki lives at obsidian/wiki/. Raw sources at obsidian/.raw/.`,
   `- If the named file does not exist in cwd, STOP. Do not try to locate it elsewhere. Report "file not found" and exit.`,
 ].join("\n");
 
@@ -180,13 +180,13 @@ function buildPrompt(event: Event, rel: string): string {
       SCOPE_RULE,
       ``,
       `Update the wiki to keep it consistent with the deletion:`,
-      `1. Search .obsidian/wiki/ for references to "${rel}" or its basename — links, frontmatter source: fields, log entries.`,
-      `2. Remove or update broken links. If a .obsidian/wiki/sources/* page was created solely from this file, delete it.`,
+      `1. Search obsidian/wiki/ for references to "${rel}" or its basename — links, frontmatter source: fields, log entries.`,
+      `2. Remove or update broken links. If a obsidian/wiki/sources/* page was created solely from this file, delete it.`,
       `3. If concept/entity pages now have no remaining sources or inbound links, mark them orphaned in frontmatter (status: orphan) — do not delete unless they are clearly only-from-this-source.`,
-      `4. Append a one-line entry to .obsidian/wiki/log.md noting "deleted ${rel}" with today's date.`,
-      `5. Update .obsidian/wiki/index.md if any deleted pages were listed there.`,
+      `4. Append a one-line entry to obsidian/wiki/log.md noting "deleted ${rel}" with today's date.`,
+      `5. Update obsidian/wiki/index.md if any deleted pages were listed there.`,
       ``,
-      `Use .obsidian/WIKI.md for schema conventions. Be conservative: prefer marking orphaned over hard-deleting.`,
+      `Use obsidian/WIKI.md for schema conventions. Be conservative: prefer marking orphaned over hard-deleting.`,
     ].join("\n");
   }
   return [
@@ -195,7 +195,7 @@ function buildPrompt(event: Event, rel: string): string {
     SCOPE_RULE,
     ``,
     `The source file is at the relative path "${rel}" from the current working directory. Read it directly; do not search for it.`,
-    `Write all wiki output under .obsidian/wiki/. Use .obsidian/WIKI.md as the schema reference.`,
+    `Write all wiki output under obsidian/wiki/. Use obsidian/WIKI.md as the schema reference.`,
   ].join("\n");
 }
 

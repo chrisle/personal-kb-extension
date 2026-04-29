@@ -35,7 +35,7 @@
     "tools": [
         {
             "name": "vault_scaffold",
-            "description": "Bootstrap an Obsidian vault: copy WIKI.md, _templates/, .obsidian/, create wiki/ folders"
+            "description": "Bootstrap an Obsidian vault: copy WIKI.md, _templates/, obsidian/, create wiki/ folders"
         },
         {
             "name": "vault_read",

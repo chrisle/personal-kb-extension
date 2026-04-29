@@ -22,7 +22,7 @@ export const vaultTools: Tool[] = [
   {
     name: "vault_scaffold",
     description:
-      "Bootstrap a knowledge base inside .obsidian/. Creates .obsidian/wiki/, .obsidian/.raw/, .obsidian/.vault-meta/, seeds WIKI.md and index/hot stubs. Idempotent — existing files are preserved unless `overwrite` is true.",
+      "Bootstrap a knowledge base inside obsidian/. Creates obsidian/wiki/, obsidian/.raw/, obsidian/.vault-meta/, seeds WIKI.md and index/hot stubs. Idempotent — existing files are preserved unless `overwrite` is true.",
     inputSchema: {
       type: "object",
       properties: {
@@ -128,10 +128,10 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
   const skipped: string[] = [];
   const kb = kbDir(vault);
 
-  // Ensure .obsidian/ exists (Obsidian creates it; we create it if starting fresh)
+  // Ensure obsidian/ exists (Obsidian creates it; we create it if starting fresh)
   await fsp.mkdir(kb, { recursive: true });
 
-  // Copy WIKI.md → .obsidian/WIKI.md
+  // Copy WIKI.md → obsidian/WIKI.md
   await copyAsset("WIKI.md", path.join(kb, "WIKI.md"), overwrite, created, skipped);
 
   // Create KB subdirs
@@ -139,22 +139,22 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
     const target = path.join(kb, dir);
     if (!fs.existsSync(target)) {
       await fsp.mkdir(target, { recursive: true });
-      created.push(`.obsidian/${dir}/`);
+      created.push(`obsidian/${dir}/`);
     } else {
-      skipped.push(`.obsidian/${dir}/`);
+      skipped.push(`obsidian/${dir}/`);
     }
   }
 
-  // Seed .obsidian/wiki/index.md and .obsidian/wiki/hot.md
+  // Seed obsidian/wiki/index.md and obsidian/wiki/hot.md
   const indexPath = path.join(kb, "wiki", "index.md");
   if (!fs.existsSync(indexPath) || overwrite) {
     await fsp.writeFile(indexPath, INDEX_TEMPLATE, "utf8");
-    created.push(".obsidian/wiki/index.md");
+    created.push("obsidian/wiki/index.md");
   }
   const hotPath = path.join(kb, "wiki", "hot.md");
   if (!fs.existsSync(hotPath) || overwrite) {
     await fsp.writeFile(hotPath, HOT_TEMPLATE, "utf8");
-    created.push(".obsidian/wiki/hot.md");
+    created.push("obsidian/wiki/hot.md");
   }
 
   await maybeAutoCommit(vault, cfg.autoCommit, "scaffold");
@@ -262,7 +262,7 @@ async function searchDir(dir: string, vault: string, prefix: string, query: stri
   if (matches.length >= 50) return;
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const e of entries) {
-    if (e.name === ".git" || e.name === "node_modules" || e.name === ".obsidian") continue;
+    if (e.name === ".git" || e.name === "node_modules" || e.name === "obsidian") continue;
     const full = path.join(dir, e.name);
     const rel = path.relative(vault, full);
     if (e.isDirectory()) {

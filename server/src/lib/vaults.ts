@@ -74,12 +74,12 @@ export function vaultPath(vault: string, relative: string): string {
   return target;
 }
 
-/** The .obsidian/ directory where all KB data (wiki, .raw, .vault-meta) lives. */
+/** The obsidian/ directory where all KB data (wiki, .raw, .vault-meta) lives. */
 export function kbDir(vault: string): string {
-  return path.join(vault, ".obsidian");
+  return path.join(vault, "obsidian");
 }
 
-/** Resolve a path relative to .obsidian/, with escape guard. */
+/** Resolve a path relative to obsidian/, with escape guard. */
 export function kbPath(vault: string, relative: string): string {
   const kb = kbDir(vault);
   const target = path.resolve(kb, relative);
@@ -109,7 +109,7 @@ export function listVaults(cfg: VaultConfig): Array<{ name: string; path: string
 }
 
 /**
- * Idempotent: ensure .obsidian/wiki/, .obsidian/.raw/, .obsidian/.vault-meta/ exist
+ * Idempotent: ensure obsidian/wiki/, obsidian/.raw/, obsidian/.vault-meta/ exist
  * and seed WIKI.md, wiki/index.md, wiki/hot.md if missing. Called by the watcher on startup.
  */
 export async function ensureKBScaffolded(vault: string): Promise<void> {
