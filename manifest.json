@@ -1,0 +1,206 @@
+{
+    "manifest_version": "0.2",
+    "name": "personal-knowledge-base",
+    "display_name": "Personal Knowledge Base",
+    "version": "0.4.2",
+    "description": "Build and maintain a personal knowledge base from inside Claude. Drop files into a folder; Claude organizes them into searchable, linked notes. Compatible with Obsidian.",
+    "long_description": "Turn one or more folders into living knowledge bases that Claude builds with you in chat. Drop in PDFs, decks, transcripts, screenshots, or notes — Claude reads them, extracts the key ideas, and files them as structured wiki pages with cross-links. Save conversations as notes, ask the wiki questions in plain English, and let Claude run autonomous research loops that file their own findings.\n\nEach knowledge folder is also a valid Obsidian vault, so you can open it in Obsidian for visual navigation, but Obsidian is not required. Optional features: auto-organize new files the moment you drop them in, and auto-snapshot every change to git so you can roll back.\n\nBased on the LLM Wiki pattern by Andrej Karpathy.",
+    "author": {
+        "name": "Christopher Le",
+        "url": "https://github.com/chrisle"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/chrisle/personal-kb-extension"
+    },
+    "homepage": "https://github.com/chrisle/personal-kb-extension",
+    "support": "https://github.com/chrisle/personal-kb-extension/issues",
+    "server": {
+        "type": "node",
+        "entry_point": "server/dist/index.js",
+        "mcp_config": {
+            "command": "node",
+            "args": [
+                "${__dirname}/server/dist/index.js",
+                "${user_config.vaults}"
+            ],
+            "env": {
+                "OBSIDIAN_AUTO_COMMIT": "${user_config.auto_commit}",
+                "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}",
+                "OBSIDIAN_INGEST_MODEL": "${user_config.ingest_model}",
+                "OBSIDIAN_DASHBOARD_PORT": "${user_config.dashboard_port}",
+                "OBSIDIAN_OPEN_BROWSER": "${user_config.open_browser}"
+            }
+        }
+    },
+    "license": "MIT",
+    "tools": [
+        {
+            "name": "vault_scaffold",
+            "description": "Bootstrap an Obsidian vault: copy WIKI.md, _templates/, obsidian/, create wiki/ folders"
+        },
+        {
+            "name": "vault_read",
+            "description": "Read a file from a configured vault"
+        },
+        {
+            "name": "vault_write",
+            "description": "Write or overwrite a file in a configured vault. Auto-commits if the vault is a git repo."
+        },
+        {
+            "name": "vault_list",
+            "description": "List files/folders in a vault path"
+        },
+        {
+            "name": "vault_search",
+            "description": "Search vault content (filename + body) with optional glob"
+        },
+        {
+            "name": "vault_active",
+            "description": "Show or set the active vault for this session"
+        },
+        {
+            "name": "kb_ingest",
+            "description": "Read a source file from .raw/ and return its content for the model to extract entities and write knowledge base pages"
+        },
+        {
+            "name": "kb_query",
+            "description": "Search knowledge base pages and return matched snippets for synthesis"
+        },
+        {
+            "name": "kb_lint",
+            "description": "Return knowledge base structure, link graph, and orphan candidates"
+        },
+        {
+            "name": "kb_reindex",
+            "description": "Rebuild the slim wiki/index.md and per-domain wiki/index/<domain>.md from a frontmatter scan"
+        },
+        {
+            "name": "canvas_create",
+            "description": "Create a new Obsidian canvas (.canvas) file"
+        },
+        {
+            "name": "canvas_add_node",
+            "description": "Add a text/file/link node to a canvas"
+        },
+        {
+            "name": "canvas_list",
+            "description": "List canvases in the vault with node counts"
+        },
+        {
+            "name": "git_commit",
+            "description": "Stage and commit changes in the vault if it is a git repo"
+        }
+    ],
+    "prompts": [
+        {
+            "name": "kb",
+            "description": "Bootstrap or check a knowledge base vault",
+            "arguments": [],
+            "text": "Bootstrap or check a knowledge base vault"
+        },
+        {
+            "name": "save",
+            "description": "Save the current conversation as a structured wiki note",
+            "arguments": [
+                "title"
+            ],
+            "text": "Save the current conversation as a structured wiki note"
+        },
+        {
+            "name": "autoresearch",
+            "description": "Autonomous research loop: search, synthesize, file into wiki",
+            "arguments": [
+                "topic"
+            ],
+            "text": "Autonomous research loop: search, synthesize, file into wiki"
+        },
+        {
+            "name": "canvas",
+            "description": "Manage Obsidian canvas (visual board) operations",
+            "arguments": [],
+            "text": "Manage Obsidian canvas (visual board) operations"
+        },
+        {
+            "name": "hot-update",
+            "description": "Update wiki/hot.md with a session summary (replaces upstream Stop hook)",
+            "arguments": [],
+            "text": "Update wiki/hot.md with a session summary"
+        },
+        {
+            "name": "vault-use",
+            "description": "Switch the active vault for this session",
+            "arguments": [
+                "name"
+            ],
+            "text": "Switch the active vault for this session"
+        }
+    ],
+    "prompts_generated": true,
+    "tools_generated": true,
+    "keywords": [
+        "obsidian",
+        "wiki",
+        "knowledge-base",
+        "second-brain",
+        "vault",
+        "markdown",
+        "pkm"
+    ],
+    "compatibility": {
+        "claude_desktop": ">=0.10.0",
+        "platforms": [
+            "darwin",
+            "win32",
+            "linux"
+        ],
+        "runtimes": {
+            "node": ">=18.0.0"
+        }
+    },
+    "user_config": {
+        "vaults": {
+            "type": "directory",
+            "title": "Knowledge folders",
+            "description": "Pick one or more folders to use as knowledge bases — one per project works well. Whenever you add, change, or remove a file in one of these folders, Claude will automatically update the knowledge base.",
+            "multiple": true,
+            "required": true,
+            "default": []
+        },
+        "auto_watch": {
+            "type": "boolean",
+            "title": "Auto ingest",
+            "description": "Automatically ingest new and changed files in the knowledge folders. (Use /kb-ingest to manually ingest files)",
+            "required": true,
+            "default": true
+        },
+        "auto_commit": {
+            "type": "boolean",
+            "title": "Auto-snapshot changes (git)",
+            "description": "If a knowledge folder is a git repo, saves a snapshot every time it updates the knowledge base.",
+            "required": true,
+            "default": true
+        },
+        "ingest_model": {
+            "type": "string",
+            "title": "Ingest model",
+            "description": "Model to use for ingesting and extracting knowledge from files. (eg: claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-7)",
+            "required": true,
+            "default": "claude-sonnet-4-6"
+        },
+        "dashboard_port": {
+            "type": "string",
+            "title": "Dashboard port (Go to http://localhost:PORT to view)",
+            "description": "Port for the dashboard server",
+            "required": true,
+            "default": "3737"
+        },
+        "open_browser": {
+            "type": "boolean",
+            "title": "Open browser on startup",
+            "description": "Automatically open the dashboard in a browser tab when the server starts.",
+            "required": true,
+            "default": false
+        }
+    }
+}

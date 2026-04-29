@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CURRENT=$(node -p "require('./manifest.json').version")
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+NEW="$MAJOR.$MINOR.$((PATCH + 1))"
+
+node -e "
+  const fs = require('fs');
+  const m = JSON.parse(fs.readFileSync('./manifest.json', 'utf8'));
+  m.version = '$NEW';
+  fs.writeFileSync('./manifest.json', JSON.stringify(m, null, 4) + '\n');
+"
+
+cd server && npm version "$NEW" --no-git-tag-version --silent && cd ..
+
+git add manifest.json server/package.json server/package-lock.json
+
+echo "bumped version $CURRENT → $NEW"

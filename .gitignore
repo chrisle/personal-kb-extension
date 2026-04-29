@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Node
+node_modules/
+.npm/
+npm-debug.log*
+
+# TypeScript build output
+server/dist/
+
+# Logs
+*.log
+
+# Built bundles (distributed separately, not via git)
+*.mcpb
+*.dxt
+
+deploy.sh
