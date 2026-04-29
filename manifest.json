@@ -1,0 +1,187 @@
+{
+    "manifest_version": "0.2",
+    "name": "obsidian-claude-accenture",
+    "display_name": "Claude + Obsidian (Accenture)",
+    "version": "0.2.0",
+    "description": "Claude Desktop companion for Obsidian vaults. Multi-vault wiki, knowledge ingestion, save-to-vault, autoresearch, canvas. Accenture-friendly distribution.",
+    "long_description": "Claude + Obsidian knowledge companion adapted for Claude Desktop and packaged for Accenture sideloading. Manage one or more Obsidian vaults from the chat: scaffold a vault, ingest sources into structured wiki pages, save conversations as notes, run autoresearch loops, and lay out a visual canvas.\n\nBased on the LLM Wiki pattern by Andrej Karpathy and the upstream `claude-obsidian` Claude Code plugin by AgriciDaniel (https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture). This DXT ports the user-facing surface (commands, skills) to Claude Desktop's MCP primitives.",
+    "author": {
+        "name": "Christopher Le",
+        "url": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture"
+    },
+    "server": {
+        "type": "node",
+        "entry_point": "server/dist/index.js",
+        "mcp_config": {
+            "command": "node",
+            "args": [
+                "${__dirname}/server/dist/index.js",
+                "${user_config.vaults}"
+            ],
+            "env": {
+                "OBSIDIAN_ACTIVE_VAULT": "${user_config.active_vault}",
+                "OBSIDIAN_AUTO_COMMIT": "${user_config.auto_commit}",
+                "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}"
+            }
+        }
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture"
+    },
+    "license": "MIT",
+    "homepage": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture",
+    "support": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture/issues",
+    "tools": [
+        {
+            "name": "vault_scaffold",
+            "description": "Bootstrap an Obsidian vault: copy WIKI.md, _templates/, .obsidian/, create wiki/ folders"
+        },
+        {
+            "name": "vault_read",
+            "description": "Read a file from a configured vault"
+        },
+        {
+            "name": "vault_write",
+            "description": "Write or overwrite a file in a configured vault. Auto-commits if the vault is a git repo."
+        },
+        {
+            "name": "vault_list",
+            "description": "List files/folders in a vault path"
+        },
+        {
+            "name": "vault_search",
+            "description": "Search vault content (filename + body) with optional glob"
+        },
+        {
+            "name": "vault_active",
+            "description": "Show or set the active vault for this session"
+        },
+        {
+            "name": "wiki_ingest",
+            "description": "Read a source file from .raw/ and return its content for the model to extract entities and write wiki pages"
+        },
+        {
+            "name": "wiki_query",
+            "description": "Search wiki pages and return matched snippets for synthesis"
+        },
+        {
+            "name": "wiki_lint",
+            "description": "Return vault structure, link graph, and orphan candidates"
+        },
+        {
+            "name": "canvas_create",
+            "description": "Create a new Obsidian canvas (.canvas) file"
+        },
+        {
+            "name": "canvas_add_node",
+            "description": "Add a text/file/link node to a canvas"
+        },
+        {
+            "name": "canvas_list",
+            "description": "List canvases in the vault with node counts"
+        },
+        {
+            "name": "git_commit",
+            "description": "Stage and commit changes in the vault if it is a git repo"
+        }
+    ],
+    "prompts": [
+        {
+            "name": "wiki",
+            "description": "Bootstrap or check an Obsidian wiki vault",
+            "arguments": [],
+            "text": "Bootstrap or check an Obsidian wiki vault"
+        },
+        {
+            "name": "save",
+            "description": "Save the current conversation as a structured wiki note",
+            "arguments": [
+                "title"
+            ],
+            "text": "Save the current conversation as a structured wiki note"
+        },
+        {
+            "name": "autoresearch",
+            "description": "Autonomous research loop: search, synthesize, file into wiki",
+            "arguments": [
+                "topic"
+            ],
+            "text": "Autonomous research loop: search, synthesize, file into wiki"
+        },
+        {
+            "name": "canvas",
+            "description": "Manage Obsidian canvas (visual board) operations",
+            "arguments": [],
+            "text": "Manage Obsidian canvas (visual board) operations"
+        },
+        {
+            "name": "hot-update",
+            "description": "Update wiki/hot.md with a session summary (replaces upstream Stop hook)",
+            "arguments": [],
+            "text": "Update wiki/hot.md with a session summary"
+        },
+        {
+            "name": "vault-use",
+            "description": "Switch the active vault for this session",
+            "arguments": [
+                "name"
+            ],
+            "text": "Switch the active vault for this session"
+        }
+    ],
+    "prompts_generated": true,
+    "tools_generated": true,
+    "keywords": [
+        "obsidian",
+        "wiki",
+        "knowledge-base",
+        "second-brain",
+        "vault",
+        "markdown",
+        "pkm",
+        "accenture"
+    ],
+    "compatibility": {
+        "claude_desktop": ">=0.10.0",
+        "platforms": [
+            "darwin",
+            "win32",
+            "linux"
+        ],
+        "runtimes": {
+            "node": ">=18.0.0"
+        }
+    },
+    "user_config": {
+        "vaults": {
+            "type": "directory",
+            "title": "Obsidian Vaults",
+            "description": "Directories that are (or will become) Obsidian vaults this extension can manage. Add one per project.",
+            "multiple": true,
+            "required": true,
+            "default": []
+        },
+        "active_vault": {
+            "type": "string",
+            "title": "Active vault (optional)",
+            "description": "Folder name of the vault to use by default. Leave empty to use the first configured vault.",
+            "required": false,
+            "default": ""
+        },
+        "auto_commit": {
+            "type": "boolean",
+            "title": "Auto-commit on write",
+            "description": "When the active vault is a git repo, auto-commit wiki/.raw/.vault-meta changes after each write.",
+            "required": false,
+            "default": true
+        },
+        "auto_watch": {
+            "type": "boolean",
+            "title": "Auto-ingest on file change",
+            "description": "Watch each configured vault (excluding wiki/, .obsidian/, .git/, .vault-meta/, .trash/, _templates/, node_modules/) and run `claude -p \"wiki-ingest <relpath>\"` whenever a file is added, changed, or removed. Requires the Claude Code CLI on PATH.",
+            "required": false,
+            "default": false
+        }
+    }
+}

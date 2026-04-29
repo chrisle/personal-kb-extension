@@ -1,0 +1,10 @@
+# TypeScript source — only compiled dist/ runs in production
+server/src/
+server/tsconfig.json
+
+# npm-internal lockfile inside node_modules
+server/node_modules/.package-lock.json
+
+# Local build artifacts
+*.mcpb
+.npm/
