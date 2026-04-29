@@ -14,6 +14,7 @@ import {
   type VaultConfig,
 } from "../lib/vaults.js";
 import { maybeAutoCommit } from "../lib/autocommit.js";
+import { log } from "../lib/log.js";
 import { textResult } from "./index.js";
 
 const ASSETS_DIR = fileURLToPath(new URL("../../../assets/", import.meta.url));
@@ -157,6 +158,15 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
     created.push("obsidian/wiki/hot.md");
   }
 
+  // Tell Obsidian not to index the obsidian/ subfolder
+  const ignorePath = path.join(vault, ".obsidianignore");
+  if (!fs.existsSync(ignorePath) || overwrite) {
+    await fsp.writeFile(ignorePath, "obsidian/wiki/hot.md\nobsidian/wiki/log.md\nobsidian/wiki/index.md\nobsidian/WIKI.md\nobsidian/.raw\nobsidian/.vault-meta\n", "utf8");
+    created.push(".obsidianignore");
+  } else {
+    skipped.push(".obsidianignore");
+  }
+
   await maybeAutoCommit(vault, cfg.autoCommit, "scaffold");
 
   return textResult(
@@ -204,6 +214,7 @@ async function readFile(cfg: VaultConfig, args: Record<string, unknown>) {
   const target = vaultPath(vault, rel);
   if (!fs.existsSync(target)) throw new Error(`File not found: ${rel}`);
   const content = await fsp.readFile(target, "utf8");
+  log("vault_read", `${path.basename(vault)} ${rel} (${content.length} chars)`);
   return textResult(content);
 }
 
@@ -215,6 +226,7 @@ async function writeFile(cfg: VaultConfig, args: Record<string, unknown>) {
   const target = vaultPath(vault, rel);
   await fsp.mkdir(path.dirname(target), { recursive: true });
   await fsp.writeFile(target, content, "utf8");
+  log("vault_write", `${path.basename(vault)} ${rel} (${content.length} chars)`);
 
   const summary = (args.commit_message as string | undefined)?.trim() || `update ${rel}`;
   const commit = await maybeAutoCommit(vault, cfg.autoCommit, summary);
@@ -255,6 +267,7 @@ async function search(cfg: VaultConfig, args: Record<string, unknown>) {
 
   const matches: string[] = [];
   await searchDir(vault, vault, prefix, query, matches);
+  log("vault_search", `${path.basename(vault)} query="${query}" → ${matches.length} match(es)`);
   return textResult(matches.slice(0, 50).join("\n") || `No matches for "${query}"`);
 }
 

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "./log.js";
 
 export interface VaultConfig {
   vaults: string[];
@@ -113,11 +114,15 @@ export function listVaults(cfg: VaultConfig): Array<{ name: string; path: string
  * and seed WIKI.md, wiki/index.md, wiki/hot.md if missing. Called by the watcher on startup.
  */
 export async function ensureKBScaffolded(vault: string): Promise<void> {
+  const name = path.basename(vault);
   const kb = kbDir(vault);
   const assetsDir = fileURLToPath(new URL("../../../assets/", import.meta.url));
 
   for (const dir of ["wiki", ".raw", ".vault-meta"]) {
-    await fsp.mkdir(path.join(kb, dir), { recursive: true });
+    const target = path.join(kb, dir);
+    const existed = fs.existsSync(target);
+    await fsp.mkdir(target, { recursive: true });
+    if (!existed) log("scaffold", `created obsidian/${dir}/ (${name})`);
   }
 
   const wikiMdDest = path.join(kb, "WIKI.md");
@@ -125,17 +130,26 @@ export async function ensureKBScaffolded(vault: string): Promise<void> {
     const wikiMdSrc = path.join(assetsDir, "WIKI.md");
     if (fs.existsSync(wikiMdSrc)) {
       await fsp.copyFile(wikiMdSrc, wikiMdDest);
+      log("scaffold", `seeded obsidian/WIKI.md (${name})`);
     }
   }
 
   const indexPath = path.join(kb, "wiki", "index.md");
   if (!fs.existsSync(indexPath)) {
     await fsp.writeFile(indexPath, KB_INDEX_TEMPLATE, "utf8");
+    log("scaffold", `seeded obsidian/wiki/index.md (${name})`);
   }
 
   const hotPath = path.join(kb, "wiki", "hot.md");
   if (!fs.existsSync(hotPath)) {
     await fsp.writeFile(hotPath, KB_HOT_TEMPLATE, "utf8");
+    log("scaffold", `seeded obsidian/wiki/hot.md (${name})`);
+  }
+
+  const obsidianIgnorePath = path.join(vault, ".obsidianignore");
+  if (!fs.existsSync(obsidianIgnorePath)) {
+    await fsp.writeFile(obsidianIgnorePath, OBSIDIAN_IGNORE, "utf8");
+    log("scaffold", `created .obsidianignore (${name})`);
   }
 }
 
@@ -174,4 +188,13 @@ A rolling, ~500-word summary of recent activity. Used by the model to restore co
 ## Recent Changes
 
 ## Active Threads
+`;
+
+// Hides plumbing files from Obsidian's graph/search while keeping concept pages visible.
+const OBSIDIAN_IGNORE = `obsidian/wiki/hot.md
+obsidian/wiki/log.md
+obsidian/wiki/index.md
+obsidian/WIKI.md
+obsidian/.raw
+obsidian/.vault-meta
 `;
