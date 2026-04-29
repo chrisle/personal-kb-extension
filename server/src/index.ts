@@ -33,7 +33,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 const server = new Server(
-  { name: "obsidian-claude-accenture", version: "0.3.0" },
+  { name: "obsidian-claude-accenture", version: "0.4.0" },
   {
     capabilities: {
       tools: {},
