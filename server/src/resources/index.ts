@@ -3,7 +3,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Resource, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
-import { getActiveVault, type VaultConfig } from "../lib/vaults.js";
+import { getActiveVault, kbDir, type VaultConfig } from "../lib/vaults.js";
 
 const ASSETS_DIR = fileURLToPath(new URL("../../../assets/", import.meta.url));
 
@@ -37,33 +37,35 @@ export function resources(_cfg: VaultConfig): Resource[] {
 }
 
 export async function readResource(cfg: VaultConfig, uri: string): Promise<ReadResourceResult> {
-  if (uri === SCHEMES.hot) return readActiveVaultFile(cfg, "wiki/hot.md", uri);
-  if (uri === SCHEMES.index) return readActiveVaultFile(cfg, "wiki/index.md", uri);
-  if (uri === SCHEMES.schema) return readBundled("WIKI.md", uri);
+  if (uri === SCHEMES.hot) return readKBFile(cfg, "wiki/hot.md", uri);
+  if (uri === SCHEMES.index) return readKBFile(cfg, "wiki/index.md", uri);
+  if (uri === SCHEMES.schema) return readKBFile(cfg, "WIKI.md", uri, path.join(ASSETS_DIR, "WIKI.md"));
   throw new Error(`Unknown resource URI: ${uri}`);
 }
 
-async function readActiveVaultFile(cfg: VaultConfig, rel: string, uri: string): Promise<ReadResourceResult> {
+async function readKBFile(
+  cfg: VaultConfig,
+  rel: string,
+  uri: string,
+  fallback?: string,
+): Promise<ReadResourceResult> {
   const vault = getActiveVault(cfg);
-  const target = path.resolve(vault, rel);
-  if (!fs.existsSync(target)) {
-    return {
-      contents: [
-        {
-          uri,
-          mimeType: "text/markdown",
-          text: `# (${rel} not yet present in active vault)\n\nVault: ${vault}\nRun /wiki to scaffold, then /hot-update to populate.`,
-        },
-      ],
-    };
+  const target = path.join(kbDir(vault), rel);
+  if (fs.existsSync(target)) {
+    const text = await fsp.readFile(target, "utf8");
+    return { contents: [{ uri, mimeType: "text/markdown", text }] };
   }
-  const text = await fsp.readFile(target, "utf8");
-  return { contents: [{ uri, mimeType: "text/markdown", text }] };
-}
-
-async function readBundled(rel: string, uri: string): Promise<ReadResourceResult> {
-  const target = path.join(ASSETS_DIR, rel);
-  if (!fs.existsSync(target)) throw new Error(`Bundled asset not found: ${rel}`);
-  const text = await fsp.readFile(target, "utf8");
-  return { contents: [{ uri, mimeType: "text/markdown", text }] };
+  if (fallback && fs.existsSync(fallback)) {
+    const text = await fsp.readFile(fallback, "utf8");
+    return { contents: [{ uri, mimeType: "text/markdown", text }] };
+  }
+  return {
+    contents: [
+      {
+        uri,
+        mimeType: "text/markdown",
+        text: `# (${rel} not yet present)\n\nVault: ${vault}\nRun /wiki to scaffold, then /hot-update to populate.`,
+      },
+    ],
+  };
 }

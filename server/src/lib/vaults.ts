@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface VaultConfig {
   vaults: string[];
@@ -72,6 +74,21 @@ export function vaultPath(vault: string, relative: string): string {
   return target;
 }
 
+/** The .obsidian/ directory where all KB data (wiki, .raw, .vault-meta) lives. */
+export function kbDir(vault: string): string {
+  return path.join(vault, ".obsidian");
+}
+
+/** Resolve a path relative to .obsidian/, with escape guard. */
+export function kbPath(vault: string, relative: string): string {
+  const kb = kbDir(vault);
+  const target = path.resolve(kb, relative);
+  if (target !== kb && !target.startsWith(kb + path.sep)) {
+    throw new Error(`Path "${relative}" escapes knowledge base root`);
+  }
+  return target;
+}
+
 export function ensureVaultExists(vault: string): void {
   if (!fs.existsSync(vault)) {
     throw new Error(`Vault directory does not exist: ${vault}`);
@@ -90,3 +107,71 @@ export function listVaults(cfg: VaultConfig): Array<{ name: string; path: string
     active: v === active,
   }));
 }
+
+/**
+ * Idempotent: ensure .obsidian/wiki/, .obsidian/.raw/, .obsidian/.vault-meta/ exist
+ * and seed WIKI.md, wiki/index.md, wiki/hot.md if missing. Called by the watcher on startup.
+ */
+export async function ensureKBScaffolded(vault: string): Promise<void> {
+  const kb = kbDir(vault);
+  const assetsDir = fileURLToPath(new URL("../../../assets/", import.meta.url));
+
+  for (const dir of ["wiki", ".raw", ".vault-meta"]) {
+    await fsp.mkdir(path.join(kb, dir), { recursive: true });
+  }
+
+  const wikiMdDest = path.join(kb, "WIKI.md");
+  if (!fs.existsSync(wikiMdDest)) {
+    const wikiMdSrc = path.join(assetsDir, "WIKI.md");
+    if (fs.existsSync(wikiMdSrc)) {
+      await fsp.copyFile(wikiMdSrc, wikiMdDest);
+    }
+  }
+
+  const indexPath = path.join(kb, "wiki", "index.md");
+  if (!fs.existsSync(indexPath)) {
+    await fsp.writeFile(indexPath, KB_INDEX_TEMPLATE, "utf8");
+  }
+
+  const hotPath = path.join(kb, "wiki", "hot.md");
+  if (!fs.existsSync(hotPath)) {
+    await fsp.writeFile(hotPath, KB_HOT_TEMPLATE, "utf8");
+  }
+}
+
+const KB_INDEX_TEMPLATE = `---
+type: meta
+title: Index
+---
+
+# Index
+
+This is the entry point for the wiki. Read this first to orient yourself.
+
+## Domains
+
+(none yet — populate as you add concept and entity pages)
+
+## Recent Sources
+
+(populated by ingest)
+`;
+
+const KB_HOT_TEMPLATE = `---
+type: meta
+title: Hot Cache
+---
+
+# Hot Cache
+
+A rolling, ~500-word summary of recent activity. Used by the model to restore context across sessions.
+
+## Last Updated
+(uninitialized)
+
+## Key Recent Facts
+
+## Recent Changes
+
+## Active Threads
+`;

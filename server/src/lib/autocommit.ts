@@ -10,7 +10,7 @@ export async function maybeAutoCommit(vault: string, enabled: boolean, summary: 
   if (!fs.existsSync(path.join(vault, ".git"))) return null;
 
   try {
-    await exec("git", ["add", "wiki", ".raw", ".vault-meta"], { cwd: vault });
+    await exec("git", ["add", path.join(".obsidian", "wiki"), path.join(".obsidian", ".raw"), path.join(".obsidian", ".vault-meta")], { cwd: vault });
   } catch {
     // any of those folders may not exist yet — fall through and commit what's staged
   }

@@ -6,6 +6,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   ensureVaultExists,
   getActiveVault,
+  kbDir,
   listVaults,
   resolveVault,
   setActiveVault,
@@ -21,7 +22,7 @@ export const vaultTools: Tool[] = [
   {
     name: "vault_scaffold",
     description:
-      "Bootstrap an Obsidian vault. Copies WIKI.md, _templates/, .obsidian/ from the bundled assets, then creates wiki/, .raw/, .vault-meta/ folders if missing. Idempotent — existing files are preserved unless `overwrite` is true.",
+      "Bootstrap a knowledge base inside .obsidian/. Creates .obsidian/wiki/, .obsidian/.raw/, .obsidian/.vault-meta/, seeds WIKI.md and index/hot stubs. Idempotent — existing files are preserved unless `overwrite` is true.",
     inputSchema: {
       type: "object",
       properties: {
@@ -125,37 +126,35 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
 
   const created: string[] = [];
   const skipped: string[] = [];
+  const kb = kbDir(vault);
 
-  // Copy WIKI.md
-  await copyAsset("WIKI.md", path.join(vault, "WIKI.md"), overwrite, created, skipped);
+  // Ensure .obsidian/ exists (Obsidian creates it; we create it if starting fresh)
+  await fsp.mkdir(kb, { recursive: true });
 
-  // Copy _templates/
-  await copyDir(path.join(ASSETS_DIR, "_templates"), path.join(vault, "_templates"), overwrite, created, skipped);
+  // Copy WIKI.md → .obsidian/WIKI.md
+  await copyAsset("WIKI.md", path.join(kb, "WIKI.md"), overwrite, created, skipped);
 
-  // Copy .obsidian/ (from assets/obsidian)
-  await copyDir(path.join(ASSETS_DIR, "obsidian"), path.join(vault, ".obsidian"), overwrite, created, skipped);
-
-  // Create empty folders
-  for (const dir of ["wiki", ".raw", ".vault-meta", "_attachments"]) {
-    const target = path.join(vault, dir);
+  // Create KB subdirs
+  for (const dir of ["wiki", ".raw", ".vault-meta"]) {
+    const target = path.join(kb, dir);
     if (!fs.existsSync(target)) {
       await fsp.mkdir(target, { recursive: true });
-      created.push(`${dir}/`);
+      created.push(`.obsidian/${dir}/`);
     } else {
-      skipped.push(`${dir}/`);
+      skipped.push(`.obsidian/${dir}/`);
     }
   }
 
-  // Seed wiki/index.md and wiki/hot.md if missing
-  const indexPath = path.join(vault, "wiki", "index.md");
+  // Seed .obsidian/wiki/index.md and .obsidian/wiki/hot.md
+  const indexPath = path.join(kb, "wiki", "index.md");
   if (!fs.existsSync(indexPath) || overwrite) {
     await fsp.writeFile(indexPath, INDEX_TEMPLATE, "utf8");
-    created.push("wiki/index.md");
+    created.push(".obsidian/wiki/index.md");
   }
-  const hotPath = path.join(vault, "wiki", "hot.md");
+  const hotPath = path.join(kb, "wiki", "hot.md");
   if (!fs.existsSync(hotPath) || overwrite) {
     await fsp.writeFile(hotPath, HOT_TEMPLATE, "utf8");
-    created.push("wiki/hot.md");
+    created.push(".obsidian/wiki/hot.md");
   }
 
   await maybeAutoCommit(vault, cfg.autoCommit, "scaffold");

@@ -2,19 +2,19 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { ensureVaultExists, resolveVault, vaultPath, type VaultConfig } from "../lib/vaults.js";
+import { ensureVaultExists, kbDir, resolveVault, type VaultConfig } from "../lib/vaults.js";
 import { textResult } from "./index.js";
 
 export const wikiTools: Tool[] = [
   {
     name: "wiki_ingest",
     description:
-      "Read a source document from the vault's .raw/ folder. Returns full content for the model to extract entities, concepts, and write structured wiki pages. Does NOT itself write — the model decides what pages to author and uses vault_write.",
+      "Read a source document from .obsidian/.raw/. Returns full content for the model to extract entities, concepts, and write structured wiki pages. Does NOT itself write — the model decides what pages to author and uses vault_write.",
     inputSchema: {
       type: "object",
       properties: {
         vault: { type: "string" },
-        source: { type: "string", description: "Filename inside .raw/, e.g. 'meeting-2026-04-29.md'" },
+        source: { type: "string", description: "Filename inside .obsidian/.raw/, e.g. 'meeting-2026-04-29.md'" },
       },
       required: ["source"],
     },
@@ -22,7 +22,7 @@ export const wikiTools: Tool[] = [
   {
     name: "wiki_query",
     description:
-      "Search the wiki/ folder for a query. Returns matched pages with snippets so the model can synthesize an answer.",
+      "Search .obsidian/wiki/ for a query. Returns matched pages with snippets so the model can synthesize an answer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -64,10 +64,10 @@ async function ingest(cfg: VaultConfig, args: Record<string, unknown>) {
   ensureVaultExists(vault);
   const source = String(args.source ?? "");
   if (!source) throw new Error("source is required");
-  const target = vaultPath(vault, path.join(".raw", source));
-  if (!fs.existsSync(target)) throw new Error(`Source not found in .raw/: ${source}`);
+  const target = path.join(kbDir(vault), ".raw", source);
+  if (!fs.existsSync(target)) throw new Error(`Source not found in .obsidian/.raw/: ${source}`);
   const content = await fsp.readFile(target, "utf8");
-  return textResult(`# Source: ${source}\n# Path: .raw/${source}\n# Length: ${content.length} chars\n\n${content}`);
+  return textResult(`# Source: ${source}\n# Path: .obsidian/.raw/${source}\n# Length: ${content.length} chars\n\n${content}`);
 }
 
 async function query(cfg: VaultConfig, args: Record<string, unknown>) {
@@ -77,13 +77,13 @@ async function query(cfg: VaultConfig, args: Record<string, unknown>) {
   const limit = Number(args.limit ?? 20);
   if (!q) throw new Error("query is required");
 
-  const wikiDir = path.join(vault, "wiki");
-  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No .obsidian/wiki/ folder yet — run vault_scaffold first");
 
   const hits: Array<{ file: string; line: number; snippet: string }> = [];
   await scan(wikiDir, vault, q, hits, limit);
 
-  if (hits.length === 0) return textResult(`No matches for "${q}" in wiki/`);
+  if (hits.length === 0) return textResult(`No matches for "${q}" in .obsidian/wiki/`);
   const lines = hits.map((h) => `${h.file}:${h.line}: ${h.snippet}`);
   return textResult(`Matches for "${q}" (${hits.length}):\n\n${lines.join("\n")}`);
 }
@@ -122,23 +122,19 @@ async function scan(
 async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
   const vault = resolveVault(cfg, args.vault as string | undefined);
   ensureVaultExists(vault);
-  const wikiDir = path.join(vault, "wiki");
-  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No .obsidian/wiki/ folder yet — run vault_scaffold first");
 
   const pages = new Map<string, { outbound: Set<string>; inbound: Set<string> }>();
 
-  // Collect pages
   const allFiles: string[] = [];
   await collect(wikiDir, allFiles);
   for (const f of allFiles) {
     if (!/\.md$/i.test(f)) continue;
-    const rel = path.relative(vault, f);
     const stem = path.basename(f, path.extname(f));
     pages.set(stem, { outbound: new Set(), inbound: new Set() });
-    void rel;
   }
 
-  // Parse links
   const linkRe = /\[\[([^\]|#]+)/g;
   for (const f of allFiles) {
     if (!/\.md$/i.test(f)) continue;
