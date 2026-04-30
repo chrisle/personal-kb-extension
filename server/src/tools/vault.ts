@@ -8,6 +8,7 @@ import {
   getActiveVault,
   kbDir,
   listVaults,
+  OBSIDIAN_IGNORE,
   resolveVault,
   setActiveVault,
   vaultPath,
@@ -23,7 +24,7 @@ export const vaultTools: Tool[] = [
   {
     name: "vault_scaffold",
     description:
-      "Bootstrap a knowledge base inside obsidian/. Creates obsidian/wiki/, obsidian/.raw/, obsidian/.vault-meta/, seeds WIKI.md and index/hot stubs. Idempotent — existing files are preserved unless `overwrite` is true.",
+      "Bootstrap a knowledge base in the vault root. Creates wiki/, .raw/, .vault-meta/, seeds WIKI.md and index/hot stubs. Idempotent — existing files are preserved unless `overwrite` is true.",
     inputSchema: {
       type: "object",
       properties: {
@@ -129,43 +130,36 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
   const skipped: string[] = [];
   const kb = kbDir(vault);
 
-  // Ensure obsidian/ exists (Obsidian creates it; we create it if starting fresh)
-  await fsp.mkdir(kb, { recursive: true });
-
-  // Copy WIKI.md → obsidian/WIKI.md
+  // Copy WIKI.md to vault root
   await copyAsset("WIKI.md", path.join(kb, "WIKI.md"), overwrite, created, skipped);
 
-  // Create KB subdirs
+  // Create KB subdirs at vault root
   for (const dir of ["wiki", ".raw", ".vault-meta"]) {
     const target = path.join(kb, dir);
     if (!fs.existsSync(target)) {
       await fsp.mkdir(target, { recursive: true });
-      created.push(`obsidian/${dir}/`);
+      created.push(`${dir}/`);
     } else {
-      skipped.push(`obsidian/${dir}/`);
+      skipped.push(`${dir}/`);
     }
   }
 
-  // Seed obsidian/wiki/index.md and obsidian/wiki/hot.md
+  // Seed wiki/index.md and wiki/hot.md
   const indexPath = path.join(kb, "wiki", "index.md");
   if (!fs.existsSync(indexPath) || overwrite) {
     await fsp.writeFile(indexPath, INDEX_TEMPLATE, "utf8");
-    created.push("obsidian/wiki/index.md");
+    created.push("wiki/index.md");
   }
   const hotPath = path.join(kb, "wiki", "hot.md");
   if (!fs.existsSync(hotPath) || overwrite) {
     await fsp.writeFile(hotPath, HOT_TEMPLATE, "utf8");
-    created.push("obsidian/wiki/hot.md");
+    created.push("wiki/hot.md");
   }
 
-  // Tell Obsidian not to index the obsidian/ subfolder
+  // Tell Obsidian not to index plumbing files / non-markdown attachments
   const ignorePath = path.join(vault, ".obsidianignore");
-  if (!fs.existsSync(ignorePath) || overwrite) {
-    await fsp.writeFile(ignorePath, "obsidian/wiki/hot.md\nobsidian/wiki/log.md\nobsidian/wiki/index.md\nobsidian/WIKI.md\nobsidian/.raw\nobsidian/.vault-meta\n", "utf8");
-    created.push(".obsidianignore");
-  } else {
-    skipped.push(".obsidianignore");
-  }
+  await fsp.writeFile(ignorePath, OBSIDIAN_IGNORE, "utf8");
+  created.push(".obsidianignore");
 
   await maybeAutoCommit(vault, cfg.autoCommit, "scaffold");
 

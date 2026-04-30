@@ -75,12 +75,12 @@ export function vaultPath(vault: string, relative: string): string {
   return target;
 }
 
-/** The obsidian/ directory where all KB data (wiki, .raw, .vault-meta) lives. */
+/** Root of the KB — wiki/, .raw/, .vault-meta/ live directly in the vault. */
 export function kbDir(vault: string): string {
-  return path.join(vault, "obsidian");
+  return vault;
 }
 
-/** Resolve a path relative to obsidian/, with escape guard. */
+/** Resolve a path relative to the vault root, with escape guard. */
 export function kbPath(vault: string, relative: string): string {
   const kb = kbDir(vault);
   const target = path.resolve(kb, relative);
@@ -110,7 +110,7 @@ export function listVaults(cfg: VaultConfig): Array<{ name: string; path: string
 }
 
 /**
- * Idempotent: ensure obsidian/wiki/, obsidian/.raw/, obsidian/.vault-meta/ exist
+ * Idempotent: ensure wiki/, .raw/, .vault-meta/ exist at the vault root
  * and seed WIKI.md, wiki/index.md, wiki/hot.md if missing. Called by the watcher on startup.
  */
 export async function ensureKBScaffolded(vault: string): Promise<void> {
@@ -122,7 +122,7 @@ export async function ensureKBScaffolded(vault: string): Promise<void> {
     const target = path.join(kb, dir);
     const existed = fs.existsSync(target);
     await fsp.mkdir(target, { recursive: true });
-    if (!existed) log("scaffold", `created obsidian/${dir}/ (${name})`);
+    if (!existed) log("scaffold", `created ${dir}/ (${name})`);
   }
 
   const wikiMdDest = path.join(kb, "WIKI.md");
@@ -130,27 +130,25 @@ export async function ensureKBScaffolded(vault: string): Promise<void> {
     const wikiMdSrc = path.join(assetsDir, "WIKI.md");
     if (fs.existsSync(wikiMdSrc)) {
       await fsp.copyFile(wikiMdSrc, wikiMdDest);
-      log("scaffold", `seeded obsidian/WIKI.md (${name})`);
+      log("scaffold", `seeded WIKI.md (${name})`);
     }
   }
 
   const indexPath = path.join(kb, "wiki", "index.md");
   if (!fs.existsSync(indexPath)) {
     await fsp.writeFile(indexPath, KB_INDEX_TEMPLATE, "utf8");
-    log("scaffold", `seeded obsidian/wiki/index.md (${name})`);
+    log("scaffold", `seeded wiki/index.md (${name})`);
   }
 
   const hotPath = path.join(kb, "wiki", "hot.md");
   if (!fs.existsSync(hotPath)) {
     await fsp.writeFile(hotPath, KB_HOT_TEMPLATE, "utf8");
-    log("scaffold", `seeded obsidian/wiki/hot.md (${name})`);
+    log("scaffold", `seeded wiki/hot.md (${name})`);
   }
 
   const obsidianIgnorePath = path.join(vault, ".obsidianignore");
-  if (!fs.existsSync(obsidianIgnorePath)) {
-    await fsp.writeFile(obsidianIgnorePath, OBSIDIAN_IGNORE, "utf8");
-    log("scaffold", `created .obsidianignore (${name})`);
-  }
+  await fsp.writeFile(obsidianIgnorePath, OBSIDIAN_IGNORE, "utf8");
+  log("scaffold", `wrote .obsidianignore (${name})`);
 }
 
 const KB_INDEX_TEMPLATE = `---
@@ -191,10 +189,11 @@ A rolling, ~500-word summary of recent activity. Used by the model to restore co
 `;
 
 // Hides plumbing files from Obsidian's graph/search while keeping concept pages visible.
-const OBSIDIAN_IGNORE = `obsidian/wiki/hot.md
-obsidian/wiki/log.md
-obsidian/wiki/index.md
-obsidian/WIKI.md
-obsidian/.raw
-obsidian/.vault-meta
+export const OBSIDIAN_IGNORE = `wiki/hot.md
+wiki/log.md
+wiki/index.md
+wiki/**/_index.md
+WIKI.md
+.raw
+.vault-meta
 `;
