@@ -12,6 +12,7 @@ import {
 
 import { loadConfigFromArgv } from "./lib/vaults.js";
 import { startVaultWatchers, stopVaultWatchers, watcherLog } from "./lib/watcher.js";
+import { startAutoLint, stopAutoLint } from "./lib/auto-lint.js";
 import { startDashboard, stopDashboard } from "./lib/dashboard.js";
 import { setupSkills, teardownSkills } from "./lib/skills.js";
 import { tools, callTool } from "./tools/index.js";
@@ -23,16 +24,19 @@ const cfg = loadConfigFromArgv(process.argv);
 
 const bootMsg =
   `boot vaults=${cfg.vaults.length} active=${cfg.active ?? "(none)"} ` +
-  `autoCommit=${cfg.autoCommit} autoWatch=${cfg.autoWatch} pid=${process.pid}`;
+  `autoCommit=${cfg.autoCommit} autoWatch=${cfg.autoWatch} ` +
+  `autoLint=${cfg.autoLint} autoLintIntervalHours=${cfg.autoLintIntervalHours} pid=${process.pid}`;
 process.stderr.write(`[boot] ${bootMsg}\n`);
 for (const v of cfg.vaults) watcherLog(v, bootMsg);
 
 startVaultWatchers(cfg.vaults, cfg.autoWatch);
+startAutoLint(cfg.vaults, cfg);
 setupSkills(cfg.vaults);
-startDashboard();
+startDashboard(cfg);
 
 const shutdown = async () => {
   teardownSkills(cfg.vaults);
+  stopAutoLint();
   await stopVaultWatchers();
   await stopDashboard();
   process.exit(0);
