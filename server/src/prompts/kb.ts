@@ -57,5 +57,12 @@ Examples:
 - \`kb_reindex\` — rebuild master + per-domain indexes from frontmatter scan
 - \`kb_lint\` — health check on demand
 
+## Slash commands available
+- \`/kb-query\` — ask any question about the knowledge base
+- \`/kb-view\` — browse interactively like Wikipedia
+- \`/save\` — file the current conversation into the KB
+- \`/kb-lint\` — audit for broken links and orphans
+- \`/kb-reindex\` — rebuild indexes
+
 Proceed.`);
 }

@@ -37,6 +37,20 @@ export const kbTools: Tool[] = [
     },
   },
   {
+    name: "kb_search",
+    description:
+      "Search the knowledge base for pages matching a query. Returns results formatted like a web search — title, path, and a one-line snippet — ranked by relevance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        vault: { type: "string" },
+        query: { type: "string" },
+        limit: { type: "integer", default: 10 },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "kb_lint",
     description:
       "Return a structural snapshot of the knowledge base: page count, link graph (in/out counts), orphans (pages with zero backlinks), and broken links. The model uses this to suggest cleanups.",
@@ -66,6 +80,8 @@ export async function callKbTool(cfg: VaultConfig, name: string, args: Record<st
       return ingest(cfg, args);
     case "kb_query":
       return query(cfg, args);
+    case "kb_search":
+      return search(cfg, args);
     case "kb_lint":
       return lint(cfg, args);
     case "kb_reindex":
@@ -135,6 +151,72 @@ async function scan(
       snippet: line.trim().slice(0, 200),
     });
   }
+}
+
+async function search(cfg: VaultConfig, args: Record<string, unknown>) {
+  const vault = resolveVault(cfg, args.vault as string | undefined);
+  ensureVaultExists(vault);
+  const q = String(args.query ?? "").toLowerCase().trim();
+  const limit = Math.min(Number(args.limit ?? 10), 20);
+  if (!q) throw new Error("query is required");
+
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+
+  // Collect all wiki .md files
+  const allFiles: string[] = [];
+  await collect(wikiDir, allFiles);
+
+  // Score each file: count occurrences of query terms, weight by position
+  const terms = q.split(/\s+/).filter(Boolean);
+  const scored: Array<{ file: string; score: number; snippet: string; title: string }> = [];
+
+  for (const f of allFiles) {
+    if (!/\.md$/i.test(f)) continue;
+    const body = await fsp.readFile(f, "utf8");
+    const lower = body.toLowerCase();
+    let score = 0;
+    for (const term of terms) {
+      let pos = 0;
+      while ((pos = lower.indexOf(term, pos)) !== -1) {
+        // Higher weight for matches in first 500 chars (frontmatter + title)
+        score += pos < 500 ? 3 : 1;
+        pos += term.length;
+      }
+    }
+    if (score === 0) continue;
+
+    const fm = parseFrontmatter(body);
+    const title = String(fm.title || path.basename(f, ".md"));
+
+    // Best snippet: find the line with the most term matches
+    const lines = body.split("\n").filter((l) => !l.startsWith("---") && l.trim());
+    let bestLine = "";
+    let bestLineScore = 0;
+    for (const line of lines) {
+      const ll = line.toLowerCase();
+      let ls = 0;
+      for (const t of terms) { if (ll.includes(t)) ls++; }
+      if (ls > bestLineScore) { bestLineScore = ls; bestLine = line.trim(); }
+    }
+    const snippet = bestLine.replace(/^\s*[-#*>]+\s*/, "").slice(0, 140);
+
+    scored.push({ file: f, score, snippet, title });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, limit);
+
+  log("kb_search", `${path.basename(vault)} query="${q}" → ${top.length} result(s)`);
+
+  if (top.length === 0) return textResult(`No results for "${q}" in wiki/`);
+
+  const lines = top.map((r, i) => {
+    const rel = path.relative(vault, r.file).replace(/\\/g, "/");
+    return `${i + 1}. **${r.title}**\n   ${rel}\n   ${r.snippet || "(no snippet)"}`;
+  });
+
+  return textResult(`Search results for "${q}" (${top.length}):\n\n${lines.join("\n\n")}`);
 }
 
 async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
