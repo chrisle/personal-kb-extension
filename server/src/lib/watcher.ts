@@ -355,10 +355,10 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
       ``,
       `Update the wiki to keep it consistent with the deletion:`,
       `1. Search wiki/ for references to "${rel}" or its basename — links, frontmatter source: fields, log entries.`,
-      `2. Remove or update broken links. If a wiki/sources/* page was created solely from this file, delete it.`,
+      `2. Remove or update broken links. If a wiki/sources/<domain>/* page was created solely from this file, delete it.`,
       `3. If concept/entity pages now have no remaining sources or inbound links, mark them orphaned in frontmatter (status: orphan) — do not delete unless they are clearly only-from-this-source.`,
       `4. Append a one-line entry to wiki/log.md noting "deleted ${rel}" with today's date.`,
-      `5. Update wiki/index.md if any deleted pages were listed there.`,
+      `5. Run kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md.`,
       ``,
       `Use WIKI.md for schema conventions. Be conservative: prefer marking orphaned over hard-deleting.`,
     ].join("\n");
@@ -368,7 +368,7 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
 
   if (extractedText) {
     return [
-      `wiki-ingest ${rel}`,
+      `kb-ingest ${rel}`,
       ``,
       SCOPE_RULE,
       ``,
@@ -380,21 +380,23 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
       extractedText,
       `--- END ---`,
       ``,
-      `Write all wiki output under wiki/. Use WIKI.md as the schema reference.`,
+      WRITE_RULE,
     ].join("\n");
   }
 
   return [
-    `wiki-ingest ${rel}`,
+    `kb-ingest ${rel}`,
     ``,
     SCOPE_RULE,
     ``,
     SOURCE_RULE(basename),
     ``,
     `The source file is at the relative path "${rel}" from the current working directory. Read it directly; do not search for it.`,
-    `Write all wiki output under wiki/. Use WIKI.md as the schema reference.`,
+    WRITE_RULE,
   ].join("\n");
 }
+
+const WRITE_RULE = `Write every wiki page under wiki/<type-folder>/<domain>/<slug>.md (e.g. wiki/concepts/clearance/risk-rating.md). vault_write rejects single-segment writes at wiki/ root. Allowed at root: index.md, log.md, hot.md, overview.md, README.md. Domain hub pages live at wiki/domains/<slug>.md. After writing, call kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md. Use WIKI.md as the schema reference.`;
 
 async function runIngest(entry: QueueEntry): Promise<number | null> {
   if (entry.event !== "unlink" && !isIngestible(entry.rel)) {

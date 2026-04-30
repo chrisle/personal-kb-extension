@@ -60,16 +60,20 @@
             "description": "Show or set the active vault for this session"
         },
         {
-            "name": "wiki_ingest",
-            "description": "Read a source file from .raw/ and return its content for the model to extract entities and write wiki pages"
+            "name": "kb_ingest",
+            "description": "Read a source file from .raw/ and return its content for the model to extract entities and write knowledge base pages"
         },
         {
-            "name": "wiki_query",
-            "description": "Search wiki pages and return matched snippets for synthesis"
+            "name": "kb_query",
+            "description": "Search knowledge base pages and return matched snippets for synthesis"
         },
         {
-            "name": "wiki_lint",
-            "description": "Return vault structure, link graph, and orphan candidates"
+            "name": "kb_lint",
+            "description": "Return knowledge base structure, link graph, and orphan candidates"
+        },
+        {
+            "name": "kb_reindex",
+            "description": "Rebuild the slim wiki/index.md and per-domain wiki/index/<domain>.md from a frontmatter scan"
         },
         {
             "name": "canvas_create",
@@ -90,10 +94,10 @@
     ],
     "prompts": [
         {
-            "name": "wiki",
-            "description": "Bootstrap or check an Obsidian wiki vault",
+            "name": "kb",
+            "description": "Bootstrap or check a knowledge base vault",
             "arguments": [],
-            "text": "Bootstrap or check an Obsidian wiki vault"
+            "text": "Bootstrap or check a knowledge base vault"
         },
         {
             "name": "save",

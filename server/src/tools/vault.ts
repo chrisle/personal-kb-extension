@@ -17,6 +17,7 @@ import {
 } from "../lib/vaults.js";
 import { maybeAutoCommit } from "../lib/autocommit.js";
 import { log } from "../lib/log.js";
+import { folderForType, parseFrontmatter, slugify } from "../lib/frontmatter.js";
 import { textResult } from "./index.js";
 
 const ASSETS_DIR = fileURLToPath(new URL("../../../assets/", import.meta.url));
@@ -135,7 +136,7 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
   await copyAsset("WIKI.md", path.join(kb, "WIKI.md"), overwrite, created, skipped);
 
   // Create KB subdirs at vault root
-  for (const dir of ["wiki", ".raw", ".vault-meta"]) {
+  for (const dir of ["wiki", "wiki/index", ".raw", ".vault-meta"]) {
     const target = path.join(kb, dir);
     if (!fs.existsSync(target)) {
       await fsp.mkdir(target, { recursive: true });
@@ -221,6 +222,10 @@ async function writeFile(cfg: VaultConfig, args: Record<string, unknown>) {
   ensureVaultExists(vault);
   const rel = String(args.path);
   const content = String(args.content ?? "");
+
+  const policyError = validateKbPath(rel, content);
+  if (policyError) throw new Error(policyError);
+
   const target = vaultPath(vault, rel);
   await fsp.mkdir(path.dirname(target), { recursive: true });
   await fsp.writeFile(target, content, "utf8");
@@ -230,6 +235,44 @@ async function writeFile(cfg: VaultConfig, args: Record<string, unknown>) {
   const commit = await maybeAutoCommit(vault, cfg.autoCommit, summary);
   return textResult(`Wrote ${rel} (${content.length} chars)${commit ? `\nCommit: ${commit}` : ""}`);
 }
+
+/**
+ * Enforce wiki/ layout: pages must live under wiki/<type>/[<domain>/]<slug>.md.
+ * Only a small allowlist of meta files may live at wiki/ root. Everything else
+ * is rejected with a suggested path so the model can retry with the right one.
+ *
+ * Returns null if the path is acceptable, or an error message string otherwise.
+ */
+function validateKbPath(rel: string, content: string): string | null {
+  const normalized = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!normalized.startsWith("wiki/")) return null;
+
+  const inWiki = normalized.slice("wiki/".length);
+  if (!inWiki) return null;
+
+  if (inWiki.includes("/")) return null;
+
+  const ROOT_ALLOWLIST = new Set(["index.md", "log.md", "hot.md", "overview.md", "README.md"]);
+  if (ROOT_ALLOWLIST.has(inWiki)) return null;
+
+  const fm = parseFrontmatter(content);
+  const folder = folderForType(fm.type);
+  const fileBase = inWiki.replace(/\.md$/i, "");
+  const slug = slugify(fm.title || fileBase) || fileBase;
+  const domainPart = fm.domain ? `${slugify(fm.domain)}/` : "_global/";
+
+  const suggestion = folder
+    ? `wiki/${folder}/${domainPart}${slug}.md`
+    : `wiki/<type-folder>/${domainPart}${slug}.md  (set 'type' in frontmatter — one of: ${Object.keys(TYPE_HINT).join(", ")})`;
+
+  return [
+    `Refusing to write "${rel}": pages must live under wiki/<type>/<domain>/<slug>.md, not the wiki/ root.`,
+    `Allowed at root: ${[...ROOT_ALLOWLIST].join(", ")}.`,
+    `Suggested path: ${suggestion}`,
+  ].join("\n");
+}
+
+const TYPE_HINT = { concept: 1, entity: 1, source: 1, domain: 1, comparison: 1, question: 1, meta: 1 };
 
 async function listEntries(cfg: VaultConfig, args: Record<string, unknown>) {
   const vault = resolveVault(cfg, args.vault as string | undefined);
@@ -317,17 +360,18 @@ async function active(cfg: VaultConfig, args: Record<string, unknown>) {
   return textResult(`Active: ${activePath}\n\nVaults:\n${lines.join("\n")}`);
 }
 
-const INDEX_TEMPLATE = `# Index
+const INDEX_TEMPLATE = `---
+type: meta
+title: Index
+---
 
-This is the entry point for the wiki. Read this first to orient yourself.
+# Index
+
+Slim master index — lists domains only. For pages within a domain, read \`wiki/index/<domain>.md\`. Run \`kb_reindex\` to rebuild after ingest.
 
 ## Domains
 
-(none yet — populate as you add concept and entity pages)
-
-## Recent Sources
-
-(populated by ingest)
+(none yet)
 `;
 
 const HOT_TEMPLATE = `# Hot Cache

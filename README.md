@@ -4,7 +4,7 @@ A Claude Desktop extension that turns one or more Obsidian vaults into a persist
 
 ## What you get
 
-- **Slash commands** in Claude Desktop: `/wiki`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use`
+- **Slash commands** in Claude Desktop: `/kb`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use`
 - **Tools** for vault file IO, wiki ingest/query/lint, Obsidian canvas manipulation, optional auto-commit
 - **Resources** so the model can pull recent context (`vault://hot.md`), the schema (`vault://WIKI.md`), or the index (`vault://wiki/index.md`) on demand
 - **Multi-vault**: one install manages N Obsidian vaults; switch with `/vault-use`
@@ -19,16 +19,16 @@ A Claude Desktop extension that turns one or more Obsidian vaults into a persist
    - **Obsidian Vaults** — add one directory per Obsidian vault you want managed. New vault directories are fine; the extension will scaffold them on first run.
    - **Active vault** (optional) — folder name of the default vault. Leave empty to use the first one.
    - **Auto-commit on write** — recommended on if your vaults are git repos.
-   - **Auto-ingest on file change** — when enabled, the extension watches each vault and runs `claude -p "wiki-ingest <relpath>"` from the vault directory whenever a file is added, changed, or removed. Skips `wiki/`, `.obsidian/`, `.git/`, `.vault-meta/`, `.trash/`, `_templates/`, `node_modules/`. Uses the Claude Code CLI bundled inside Claude Desktop (`<data-dir>/claude-code/<version>/...`); falls back to `claude` on `PATH` if the bundled copy isn't found.
+   - **Auto-ingest on file change** — when enabled, the extension watches each vault and runs `claude -p "kb-ingest <relpath>"` from the vault directory whenever a file is added, changed, or removed. Skips `wiki/`, `.obsidian/`, `.git/`, `.vault-meta/`, `.trash/`, `_templates/`, `node_modules/`. Uses the Claude Code CLI bundled inside Claude Desktop (`<data-dir>/claude-code/<version>/...`); falls back to `claude` on `PATH` if the bundled copy isn't found.
    - **Dashboard port** — port for the live ingest queue dashboard. Open `http://localhost:<port>` in any browser to watch files being processed in real time. Default `3737`.
-5. Toggle the extension **on**. Open a new chat. Type `/` and confirm `/wiki`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use` appear. Open `http://localhost:3737` to see the live ingest dashboard.
+5. Toggle the extension **on**. Open a new chat. Type `/` and confirm `/kb`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use` appear. Open `http://localhost:3737` to see the live ingest dashboard.
 
 ## First-time vault setup
 
 In a new chat:
 
 ```
-/wiki
+/kb
 ```
 
 Claude will:
@@ -45,8 +45,8 @@ Claude will:
 | File this conversation | `/save` (or `/save title="My Note" kind=concept`) |
 | Research a topic and file findings | `/autoresearch topic="…"` |
 | Drop a source for ingestion | Save the file to `<vault>/.raw/`, then ask Claude to "ingest <filename>" |
-| Ask the wiki | "What do I have on X?" — Claude uses `wiki_query` |
-| Health-check the vault | "Lint the wiki" — Claude uses `wiki_lint` |
+| Ask the knowledge base | "What do I have on X?" — Claude uses `kb_query` |
+| Health-check the vault | "Lint the knowledge base" — Claude uses `kb_lint` |
 | Visual board | `/canvas` |
 | Refresh recent-context cache | `/hot-update` (run at end of session) |
 | Switch vaults mid-session | `/vault-use <name>` |

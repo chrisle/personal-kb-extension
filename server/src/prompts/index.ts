@@ -1,7 +1,7 @@
 import type { Prompt, GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
 import type { VaultConfig } from "../lib/vaults.js";
 
-import { wikiPrompt } from "./wiki.js";
+import { kbPrompt } from "./kb.js";
 import { savePrompt } from "./save.js";
 import { autoresearchPrompt } from "./autoresearch.js";
 import { canvasPrompt } from "./canvas.js";
@@ -10,12 +10,12 @@ import { vaultUsePrompt } from "./vault-use.js";
 
 const definitions: Prompt[] = [
   {
-    name: "wiki",
-    description: "Bootstrap or check an Obsidian wiki vault. Routes to scaffold/query/lint/ingest based on context.",
+    name: "kb",
+    description: "Bootstrap or check a knowledge base vault. Routes to scaffold/query/lint/ingest based on context.",
   },
   {
     name: "save",
-    description: "Save the current conversation as a structured wiki note.",
+    description: "Save the current conversation as a structured knowledge base note.",
     arguments: [
       { name: "title", description: "Optional note title", required: false },
       { name: "kind", description: "Note kind: concept | decision | session", required: false },
@@ -23,7 +23,7 @@ const definitions: Prompt[] = [
   },
   {
     name: "autoresearch",
-    description: "Autonomous research loop: search, synthesize, file into the wiki.",
+    description: "Autonomous research loop: search, synthesize, file into the knowledge base.",
     arguments: [{ name: "topic", description: "Topic to research", required: false }],
   },
   {
@@ -49,8 +49,8 @@ export async function getPrompt(
   args: Record<string, string>,
 ): Promise<GetPromptResult> {
   switch (name) {
-    case "wiki":
-      return wikiPrompt(cfg, args);
+    case "kb":
+      return kbPrompt(cfg, args);
     case "save":
       return savePrompt(cfg, args);
     case "autoresearch":

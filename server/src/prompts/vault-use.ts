@@ -19,7 +19,7 @@ export async function vaultUsePrompt(cfg: VaultConfig, args: Record<string, stri
 
 Active vault is now: \`${resolved}\`
 
-Subsequent vault_/wiki_/canvas_/git_ tool calls in this session will target this vault by default. Tools still accept an explicit \`vault\` argument to override per-call.
+Subsequent vault_/kb_/canvas_/git_ tool calls in this session will target this vault by default. Tools still accept an explicit \`vault\` argument to override per-call.
 
 Suggested next step: read \`vault://hot.md\` for recent context, or run \`vault_list path=wiki recursive=true\` to see what's there.`);
 }

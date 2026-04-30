@@ -17,22 +17,24 @@ ${topic ? `Topic: **${topic}**` : "No topic given — ask: 'What topic should I 
    - Find authoritative sources (primary docs, papers, official sites)
    - For each source, capture: URL, title, author, date, key claims
 4. **Cross-check**: where sources disagree, flag the contradiction explicitly.
-5. **Synthesize and file**: for each major finding, create a wiki page via **vault_write**:
-   - One \`wiki/sources/<kebab-source-name>.md\` per source (summary + link + frontmatter)
-   - One \`wiki/concepts/<kebab-concept>.md\` per distinct concept the research surfaced
-   - One \`wiki/questions/<kebab-question>.md\` if there's an open question
-   - Cross-link with \`[[wikilinks]]\`
-6. **Update**:
-   - \`wiki/index.md\` — add the new pages under appropriate sections
-   - \`wiki/log.md\` — TOP of file, one-line entry: \`YYYY-MM-DD — autoresearch: <topic> (<N> sources, <M> pages)\`
+5. **Pick a domain slug** for this research (e.g. the topic kebab-cased). All pages produced get the same \`domain\` in frontmatter.
+6. **Synthesize and file**: for each major finding, create a wiki page via **vault_write** at \`wiki/<type-folder>/<domain>/<slug>.md\`:
+   - One \`wiki/sources/<domain>/<source-slug>.md\` per source (summary + link + frontmatter)
+   - One \`wiki/concepts/<domain>/<concept-slug>.md\` per distinct concept the research surfaced
+   - One \`wiki/questions/<domain>/<question-slug>.md\` if there's an open question
+   - Cross-link with \`[[stem]]\` wikilinks (no paths)
+7. **Update**:
+   - \`wiki/log.md\` — TOP of file, one-line entry: \`YYYY-MM-DD — autoresearch: <topic> (<N> sources, <M> pages, domain: <slug>)\`
    - \`wiki/hot.md\` — overwrite with the new recent context (≤ 500 words)
-7. **Report**: pages created, key findings, open questions, source count.
+8. **Run kb_reindex** to rebuild master and per-domain indexes.
+9. **Report**: pages created, domain, key findings, open questions, source count.
 
 ## Constraints
-- Every page must have YAML frontmatter (type, status, created, updated, tags)
+- Every page must have YAML frontmatter (type, title, domain, status, created, updated, tags)
 - Cite sources with \`[Title](URL)\` markdown links inside source pages
 - Do not fabricate sources. If a search returns nothing useful, say so and stop.
 - Stay within the configured vault. All writes via \`vault_write\` to relative paths.
+- vault_write rejects writes to \`wiki/<file>.md\` at root — every page goes under \`wiki/<type>/<domain>/\`.
 
 Proceed.`);
 }

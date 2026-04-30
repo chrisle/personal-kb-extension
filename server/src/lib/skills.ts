@@ -24,6 +24,7 @@ function skillsDest(vault: string): string {
 export function setupSkills(vaults: string[]): void {
   const names = skillNames();
   if (names.length === 0) return;
+  const current = new Set(names);
   for (const vault of vaults) {
     const dest = skillsDest(vault);
     try {
@@ -42,6 +43,19 @@ export function setupSkills(vaults: string[]): void {
       } catch (err) {
         process.stderr.write(`[skills] failed to install ${name}: ${(err as Error).message}\n`);
       }
+    }
+    // Remove orphaned skill dirs we previously installed but no longer ship
+    try {
+      for (const entry of fs.readdirSync(dest)) {
+        if (current.has(entry)) continue;
+        const orphan = path.join(dest, entry);
+        if (!fs.statSync(orphan).isDirectory()) continue;
+        if (!fs.existsSync(path.join(orphan, MARKER))) continue;
+        fs.rmSync(orphan, { recursive: true, force: true });
+        process.stderr.write(`[skills] removed obsolete ${entry} → ${orphan}\n`);
+      }
+    } catch {
+      // best-effort
     }
   }
 }

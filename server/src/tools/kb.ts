@@ -1,0 +1,317 @@
+import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ensureVaultExists, kbDir, resolveVault, type VaultConfig } from "../lib/vaults.js";
+import { log } from "../lib/log.js";
+import { parseFrontmatter, slugify } from "../lib/frontmatter.js";
+import { maybeAutoCommit } from "../lib/autocommit.js";
+import { textResult } from "./index.js";
+
+export const kbTools: Tool[] = [
+  {
+    name: "kb_ingest",
+    description:
+      "Read a source document from .raw/. Returns full content for the model to extract entities, concepts, and write structured knowledge base pages. Does NOT itself write — the model decides what pages to author and uses vault_write.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        vault: { type: "string" },
+        source: { type: "string", description: "Filename inside .raw/, e.g. 'meeting-2026-04-29.md'" },
+      },
+      required: ["source"],
+    },
+  },
+  {
+    name: "kb_query",
+    description:
+      "Search the knowledge base (wiki/) for a query. Returns matched pages with snippets so the model can synthesize an answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        vault: { type: "string" },
+        query: { type: "string" },
+        limit: { type: "integer", default: 20 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "kb_lint",
+    description:
+      "Return a structural snapshot of the knowledge base: page count, link graph (in/out counts), orphans (pages with zero backlinks), and broken links. The model uses this to suggest cleanups.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        vault: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "kb_reindex",
+    description:
+      "Rebuild wiki/index.md (slim domain map) and wiki/index/<domain>.md (per-domain page lists) from a frontmatter scan. Idempotent — call after creating, moving, or deleting wiki pages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        vault: { type: "string" },
+      },
+    },
+  },
+];
+
+export async function callKbTool(cfg: VaultConfig, name: string, args: Record<string, unknown>) {
+  switch (name) {
+    case "kb_ingest":
+      return ingest(cfg, args);
+    case "kb_query":
+      return query(cfg, args);
+    case "kb_lint":
+      return lint(cfg, args);
+    case "kb_reindex":
+      return reindex(cfg, args);
+    default:
+      throw new Error(`Unknown kb tool: ${name}`);
+  }
+}
+
+async function ingest(cfg: VaultConfig, args: Record<string, unknown>) {
+  const vault = resolveVault(cfg, args.vault as string | undefined);
+  ensureVaultExists(vault);
+  const source = String(args.source ?? "");
+  if (!source) throw new Error("source is required");
+  const target = path.join(kbDir(vault), ".raw", source);
+  if (!fs.existsSync(target)) throw new Error(`Source not found in .raw/: ${source}`);
+  const content = await fsp.readFile(target, "utf8");
+  log("kb_ingest", `${path.basename(vault)} source=${source} (${content.length} chars)`);
+  return textResult(`# Source: ${source}\n# Path: .raw/${source}\n# Length: ${content.length} chars\n\n${content}`);
+}
+
+async function query(cfg: VaultConfig, args: Record<string, unknown>) {
+  const vault = resolveVault(cfg, args.vault as string | undefined);
+  ensureVaultExists(vault);
+  const q = String(args.query ?? "").toLowerCase();
+  const limit = Number(args.limit ?? 20);
+  if (!q) throw new Error("query is required");
+
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+
+  const hits: Array<{ file: string; line: number; snippet: string }> = [];
+  await scan(wikiDir, vault, q, hits, limit);
+
+  log("kb_query", `${path.basename(vault)} query="${q}" → ${hits.length} hit(s)`);
+  if (hits.length === 0) return textResult(`No matches for "${q}" in wiki/`);
+  const lines = hits.map((h) => `${h.file}:${h.line}: ${h.snippet}`);
+  return textResult(`Matches for "${q}" (${hits.length}):\n\n${lines.join("\n")}`);
+}
+
+async function scan(
+  dir: string,
+  vault: string,
+  q: string,
+  hits: Array<{ file: string; line: number; snippet: string }>,
+  limit: number,
+) {
+  if (hits.length >= limit) return;
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    if (hits.length >= limit) return;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      await scan(full, vault, q, hits, limit);
+      continue;
+    }
+    if (!/\.md$/i.test(e.name)) continue;
+    const body = await fsp.readFile(full, "utf8");
+    const lower = body.toLowerCase();
+    const idx = lower.indexOf(q);
+    if (idx === -1) continue;
+    const lineNo = body.slice(0, idx).split("\n").length;
+    const line = body.split("\n")[lineNo - 1] ?? "";
+    hits.push({
+      file: path.relative(vault, full),
+      line: lineNo,
+      snippet: line.trim().slice(0, 200),
+    });
+  }
+}
+
+async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
+  const vault = resolveVault(cfg, args.vault as string | undefined);
+  ensureVaultExists(vault);
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+
+  const pages = new Map<string, { outbound: Set<string>; inbound: Set<string> }>();
+
+  const allFiles: string[] = [];
+  await collect(wikiDir, allFiles);
+  for (const f of allFiles) {
+    if (!/\.md$/i.test(f)) continue;
+    const stem = path.basename(f, path.extname(f));
+    pages.set(stem, { outbound: new Set(), inbound: new Set() });
+  }
+
+  const linkRe = /\[\[([^\]|#]+)/g;
+  for (const f of allFiles) {
+    if (!/\.md$/i.test(f)) continue;
+    const stem = path.basename(f, path.extname(f));
+    const body = await fsp.readFile(f, "utf8");
+    const node = pages.get(stem)!;
+    let m: RegExpExecArray | null;
+    while ((m = linkRe.exec(body)) !== null) {
+      const target = m[1].trim();
+      node.outbound.add(target);
+      const targetNode = pages.get(target);
+      if (targetNode) targetNode.inbound.add(stem);
+    }
+  }
+
+  const total = pages.size;
+  const orphans: string[] = [];
+  const broken: Array<{ from: string; to: string }> = [];
+  for (const [name, node] of pages) {
+    if (node.inbound.size === 0 && name !== "index" && name !== "hot") orphans.push(name);
+    for (const t of node.outbound) {
+      if (!pages.has(t)) broken.push({ from: name, to: t });
+    }
+  }
+
+  log("kb_lint", `${path.basename(vault)} pages=${total} orphans=${orphans.length} broken=${broken.length}`);
+  const lines = [
+    `# Lint report — ${path.basename(vault)}`,
+    `Pages: ${total}`,
+    `Orphans (no inbound links, excl. index/hot): ${orphans.length}`,
+    orphans.length ? `  ${orphans.slice(0, 30).join(", ")}` : "",
+    `Broken links: ${broken.length}`,
+    ...broken.slice(0, 30).map((b) => `  ${b.from} → ${b.to}`),
+  ].filter(Boolean);
+  return textResult(lines.join("\n"));
+}
+
+async function collect(dir: string, out: string[]) {
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) await collect(full, out);
+    else out.push(full);
+  }
+}
+
+interface PageRecord {
+  rel: string;
+  stem: string;
+  type: string;
+  domain: string;
+  title: string;
+}
+
+const META_BASENAMES = new Set(["index.md", "log.md", "hot.md", "overview.md", "README.md"]);
+
+async function reindex(cfg: VaultConfig, args: Record<string, unknown>) {
+  const vault = resolveVault(cfg, args.vault as string | undefined);
+  ensureVaultExists(vault);
+  const wikiDir = path.join(kbDir(vault), "wiki");
+  if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
+
+  const indexDir = path.join(wikiDir, "index");
+  await fsp.mkdir(indexDir, { recursive: true });
+
+  const allFiles: string[] = [];
+  await collect(wikiDir, allFiles);
+
+  const pages: PageRecord[] = [];
+  for (const full of allFiles) {
+    if (!/\.md$/i.test(full)) continue;
+    const rel = path.relative(wikiDir, full).replace(/\\/g, "/");
+
+    // Skip generated/meta files
+    if (META_BASENAMES.has(path.basename(rel))) continue;
+    if (rel.startsWith("index/")) continue;
+
+    const body = await fsp.readFile(full, "utf8");
+    const fm = parseFrontmatter(body);
+    if (!fm.type || fm.type === "meta") continue;
+
+    const stem = path.basename(rel, ".md");
+    const title = fm.title || stem;
+    const domain = (fm.domain && slugify(fm.domain)) || "_global";
+    pages.push({ rel, stem, type: fm.type, domain, title });
+  }
+
+  // Group by domain → type → pages
+  const byDomain = new Map<string, Map<string, PageRecord[]>>();
+  for (const p of pages) {
+    if (!byDomain.has(p.domain)) byDomain.set(p.domain, new Map());
+    const byType = byDomain.get(p.domain)!;
+    if (!byType.has(p.type)) byType.set(p.type, []);
+    byType.get(p.type)!.push(p);
+  }
+
+  // Wipe + rewrite per-domain sub-indexes
+  for (const entry of await fsp.readdir(indexDir).catch(() => [])) {
+    if (entry.endsWith(".md")) await fsp.rm(path.join(indexDir, entry)).catch(() => {});
+  }
+  for (const [domain, byType] of byDomain) {
+    const lines: string[] = [
+      `---`,
+      `type: meta`,
+      `title: "${domain} Index"`,
+      `domain: ${domain}`,
+      `---`,
+      ``,
+      `# ${domain}`,
+      ``,
+      `Generated by \`kb_reindex\`. ${pages.filter((p) => p.domain === domain).length} page(s).`,
+      ``,
+    ];
+    const orderedTypes = ["domain", "concept", "entity", "source", "comparison", "question"];
+    const sortedTypes = [
+      ...orderedTypes.filter((t) => byType.has(t)),
+      ...[...byType.keys()].filter((t) => !orderedTypes.includes(t)).sort(),
+    ];
+    for (const t of sortedTypes) {
+      const ps = byType.get(t)!.slice().sort((a, b) => a.title.localeCompare(b.title));
+      lines.push(`## ${t.charAt(0).toUpperCase() + t.slice(1)}s`);
+      for (const p of ps) lines.push(`- [[${p.stem}]] — ${p.title}`);
+      lines.push(``);
+    }
+    await fsp.writeFile(path.join(indexDir, `${domain}.md`), lines.join("\n"), "utf8");
+  }
+
+  // Rewrite slim master index
+  const domainNames = [...byDomain.keys()].sort();
+  const masterLines: string[] = [
+    `---`,
+    `type: meta`,
+    `title: Index`,
+    `---`,
+    ``,
+    `# Index`,
+    ``,
+    `Slim master index — lists domains only. For pages within a domain, read \`wiki/index/<domain>.md\`. Run \`kb_reindex\` to rebuild.`,
+    ``,
+    `## Domains`,
+    ``,
+  ];
+  if (domainNames.length === 0) {
+    masterLines.push(`(none yet)`);
+  } else {
+    for (const d of domainNames) {
+      const count = pages.filter((p) => p.domain === d).length;
+      masterLines.push(`- [[index/${d}|${d}]] — ${count} page(s)`);
+    }
+  }
+  masterLines.push(``);
+  await fsp.writeFile(path.join(wikiDir, "index.md"), masterLines.join("\n"), "utf8");
+
+  log("kb_reindex", `${path.basename(vault)} pages=${pages.length} domains=${domainNames.length}`);
+  await maybeAutoCommit(vault, cfg.autoCommit, `reindex: ${pages.length} pages across ${domainNames.length} domain(s)`);
+
+  return textResult(
+    `Reindexed ${pages.length} page(s) across ${domainNames.length} domain(s):\n  ${
+      domainNames.map((d) => `${d} (${pages.filter((p) => p.domain === d).length})`).join(", ") || "(none)"
+    }`,
+  );
+}
