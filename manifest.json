@@ -21,7 +21,8 @@
             "env": {
                 "OBSIDIAN_ACTIVE_VAULT": "${user_config.active_vault}",
                 "OBSIDIAN_AUTO_COMMIT": "${user_config.auto_commit}",
-                "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}"
+                "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}",
+                "OBSIDIAN_INGEST_MODEL": "${user_config.ingest_model}"
             }
         }
     },
@@ -182,6 +183,13 @@
             "description": "When you add, edit, or delete a file in a knowledge folder, Claude immediately reads it and updates the wiki — no need to ask.",
             "required": false,
             "default": true
+        },
+        "ingest_model": {
+            "type": "string",
+            "title": "Ingest model",
+            "description": "Claude model used when ingesting files into the wiki. claude-sonnet-4-6 (default, recommended), claude-haiku-4-5-20251001 (faster, cheaper), claude-opus-4-7 (highest quality).",
+            "required": false,
+            "default": "claude-sonnet-4-6"
         }
     }
 }
