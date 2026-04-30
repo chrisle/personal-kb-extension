@@ -11,6 +11,7 @@ import {
   OBSIDIAN_IGNORE,
   resolveVault,
   setActiveVault,
+  upsertClaudeMd,
   vaultPath,
   type VaultConfig,
 } from "../lib/vaults.js";
@@ -160,6 +161,9 @@ async function scaffold(cfg: VaultConfig, args: Record<string, unknown>) {
   const ignorePath = path.join(vault, ".obsidianignore");
   await fsp.writeFile(ignorePath, OBSIDIAN_IGNORE, "utf8");
   created.push(".obsidianignore");
+
+  const claudeAction = await upsertClaudeMd(vault);
+  created.push(`CLAUDE.md (${claudeAction})`);
 
   await maybeAutoCommit(vault, cfg.autoCommit, "scaffold");
 

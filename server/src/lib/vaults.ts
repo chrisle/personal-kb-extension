@@ -149,6 +149,8 @@ export async function ensureKBScaffolded(vault: string): Promise<void> {
   const obsidianIgnorePath = path.join(vault, ".obsidianignore");
   await fsp.writeFile(obsidianIgnorePath, OBSIDIAN_IGNORE, "utf8");
   log("scaffold", `wrote .obsidianignore (${name})`);
+
+  await upsertClaudeMd(vault);
 }
 
 const KB_INDEX_TEMPLATE = `---
@@ -197,3 +199,67 @@ WIKI.md
 .raw
 .vault-meta
 `;
+
+const CLAUDE_WIKI_START = "<!-- wiki-kb:start -->";
+const CLAUDE_WIKI_END = "<!-- wiki-kb:end -->";
+
+const CLAUDE_WIKI_SECTION = `${CLAUDE_WIKI_START}
+## Wiki Knowledge Base
+
+This vault has a persistent, Claude-maintained wiki at \`wiki/\`.
+
+**At the start of every session**, orient yourself:
+1. Read \`wiki/hot.md\` — rolling ~500-word context summary
+2. If more context needed, read \`wiki/index.md\` — full catalog
+3. For a specific domain, read \`wiki/<domain>/_index.md\`
+4. Then read individual pages as needed
+
+**Structure**
+- \`wiki/\` — Claude-generated knowledge base
+- \`.raw/\` — source documents (drop files here to ingest; never modify)
+- \`WIKI.md\` — schema reference for wiki page types and conventions
+
+**Operations**
+- Ingest: drop a file into the vault — the watcher ingests it automatically
+- Query: ask any question; read the index first, then drill in
+- Lint: "lint the wiki" — health check on links and orphans
+
+**Skills**
+- \`/wiki\` — setup and routing
+- \`/wiki-ingest\` — manually ingest a source
+- \`/wiki-lint\` — health check
+${CLAUDE_WIKI_END}`;
+
+const CLAUDE_MD_FRESH = `# Wiki Vault
+
+${CLAUDE_WIKI_SECTION}
+`;
+
+export async function upsertClaudeMd(vault: string): Promise<"created" | "updated"> {
+  const dest = path.join(vault, "CLAUDE.md");
+  const name = path.basename(vault);
+
+  if (!fs.existsSync(dest)) {
+    await fsp.writeFile(dest, CLAUDE_MD_FRESH, "utf8");
+    log("scaffold", `created CLAUDE.md (${name})`);
+    return "created";
+  }
+
+  const existing = await fsp.readFile(dest, "utf8");
+  const startIdx = existing.indexOf(CLAUDE_WIKI_START);
+  const endIdx = existing.indexOf(CLAUDE_WIKI_END);
+
+  let next: string;
+  if (startIdx !== -1 && endIdx !== -1) {
+    next =
+      existing.slice(0, startIdx) +
+      CLAUDE_WIKI_SECTION +
+      existing.slice(endIdx + CLAUDE_WIKI_END.length);
+  } else {
+    next = existing.trimEnd() + "\n\n" + CLAUDE_WIKI_SECTION + "\n";
+  }
+
+  await fsp.writeFile(dest, next, "utf8");
+  log("scaffold", `updated CLAUDE.md (${name})`);
+  return "updated";
+}
