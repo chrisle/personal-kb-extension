@@ -12,6 +12,7 @@ import {
 
 import { loadConfigFromArgv } from "./lib/vaults.js";
 import { startVaultWatchers, stopVaultWatchers, watcherLog } from "./lib/watcher.js";
+import { setupSkills, teardownSkills } from "./lib/skills.js";
 import { tools, callTool } from "./tools/index.js";
 import { prompts, getPrompt } from "./prompts/index.js";
 import { resources, readResource } from "./resources/index.js";
@@ -26,7 +27,10 @@ process.stderr.write(`[boot] ${bootMsg}\n`);
 for (const v of cfg.vaults) watcherLog(v, bootMsg);
 
 startVaultWatchers(cfg.vaults, cfg.autoWatch);
+setupSkills(cfg.vaults);
+
 const shutdown = async () => {
+  teardownSkills(cfg.vaults);
   await stopVaultWatchers();
   process.exit(0);
 };
