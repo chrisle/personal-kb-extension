@@ -1,0 +1,22 @@
+{
+  "name": "obsidian-claude-accenture-dashboard",
+  "version": "0.4.0",
+  "description": "Live ingest queue dashboard, served by the MCP server as static assets.",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3737",
+    "build": "next build",
+    "clean": "rm -rf .next out"
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.4.5"
+  }
+}

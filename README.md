@@ -8,6 +8,7 @@ A Claude Desktop extension that turns one or more Obsidian vaults into a persist
 - **Tools** for vault file IO, wiki ingest/query/lint, Obsidian canvas manipulation, optional auto-commit
 - **Resources** so the model can pull recent context (`vault://hot.md`), the schema (`vault://WIKI.md`), or the index (`vault://wiki/index.md`) on demand
 - **Multi-vault**: one install manages N Obsidian vaults; switch with `/vault-use`
+- **Live ingest dashboard**: a small web page on `http://localhost:<port>` shows files currently being processed, queued, and recently completed. Default port is `3737`; configurable in extension settings.
 
 ## Install (for coworkers)
 
@@ -19,7 +20,8 @@ A Claude Desktop extension that turns one or more Obsidian vaults into a persist
    - **Active vault** (optional) — folder name of the default vault. Leave empty to use the first one.
    - **Auto-commit on write** — recommended on if your vaults are git repos.
    - **Auto-ingest on file change** — when enabled, the extension watches each vault and runs `claude -p "wiki-ingest <relpath>"` from the vault directory whenever a file is added, changed, or removed. Skips `wiki/`, `.obsidian/`, `.git/`, `.vault-meta/`, `.trash/`, `_templates/`, `node_modules/`. Uses the Claude Code CLI bundled inside Claude Desktop (`<data-dir>/claude-code/<version>/...`); falls back to `claude` on `PATH` if the bundled copy isn't found.
-5. Toggle the extension **on**. Open a new chat. Type `/` and confirm `/wiki`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use` appear.
+   - **Dashboard port** — port for the live ingest queue dashboard. Open `http://localhost:<port>` in any browser to watch files being processed in real time. Default `3737`.
+5. Toggle the extension **on**. Open a new chat. Type `/` and confirm `/wiki`, `/save`, `/autoresearch`, `/canvas`, `/hot-update`, `/vault-use` appear. Open `http://localhost:3737` to see the live ingest dashboard.
 
 ## First-time vault setup
 
@@ -68,16 +70,19 @@ Requires Node 18+ and `npm`.
 # 1. Build the MCP server
 cd server && npm install && npm run build && cd ..
 
-# 2. Prune dev deps so they don't get bundled
+# 2. Build the dashboard (Next.js static export → dashboard/out/)
+cd dashboard && npm install && npm run build && cd ..
+
+# 3. Prune server dev deps so they don't get bundled
 cd server && npm prune --omit=dev && cd ..
 
-# 3. Install the packer in a tmp dir (avoids ancestor package.json conflicts)
+# 4. Install the packer in a tmp dir (avoids ancestor package.json conflicts)
 mkdir -p /tmp/mcpb-tools && (cd /tmp/mcpb-tools && npm init -y >/dev/null && npm install @anthropic-ai/mcpb)
 
-# 4. Pack
+# 5. Pack (.mcpbignore excludes dashboard source/node_modules; only dashboard/out/ ships)
 /tmp/mcpb-tools/node_modules/.bin/mcpb pack . obsidian-claude-accenture.mcpb
 
-# 5. Restore dev deps for next build
+# 6. Restore server dev deps for next build
 cd server && npm install && cd ..
 ```
 

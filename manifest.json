@@ -22,7 +22,8 @@
                 "OBSIDIAN_ACTIVE_VAULT": "${user_config.active_vault}",
                 "OBSIDIAN_AUTO_COMMIT": "${user_config.auto_commit}",
                 "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}",
-                "OBSIDIAN_INGEST_MODEL": "${user_config.ingest_model}"
+                "OBSIDIAN_INGEST_MODEL": "${user_config.ingest_model}",
+                "OBSIDIAN_DASHBOARD_PORT": "${user_config.dashboard_port}"
             }
         }
     },
@@ -166,7 +167,7 @@
         "active_vault": {
             "type": "string",
             "title": "Default folder (optional)",
-            "description": "Name of the folder Claude should use when you don't specify one in chat. Leave blank to default to the first folder above. You can switch any time during a chat with /vault-use.",
+            "description": "my-vault",
             "required": false,
             "default": ""
         },
@@ -187,9 +188,16 @@
         "ingest_model": {
             "type": "string",
             "title": "Ingest model",
-            "description": "Claude model used when ingesting files into the wiki. claude-sonnet-4-6 (default, recommended), claude-haiku-4-5-20251001 (faster, cheaper), claude-opus-4-7 (highest quality).",
+            "description": "claude-sonnet-4-6",
             "required": false,
             "default": "claude-sonnet-4-6"
+        },
+        "dashboard_port": {
+            "type": "string",
+            "title": "Dashboard port",
+            "description": "3737",
+            "required": false,
+            "default": "3737"
         }
     }
 }

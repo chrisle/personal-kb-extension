@@ -1,9 +1,20 @@
 # TypeScript source — only compiled dist/ runs in production
 server/src/
 server/tsconfig.json
+server/build.mjs
 
 # npm-internal lockfile inside node_modules
 server/node_modules/.package-lock.json
+
+# Dashboard — only the static export under dashboard/out/ runs in production
+dashboard/node_modules/
+dashboard/.next/
+dashboard/app/
+dashboard/public/
+dashboard/package.json
+dashboard/tsconfig.json
+dashboard/next.config.mjs
+dashboard/next-env.d.ts
 
 # Local build artifacts
 *.mcpb

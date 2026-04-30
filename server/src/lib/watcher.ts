@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { EventEmitter } from "node:events";
 import chokidar, { type FSWatcher } from "chokidar";
 import { ensureKBScaffolded } from "./vaults.js";
 import { resolveClaudeBin } from "./claude-bin.js";
@@ -18,16 +19,69 @@ const EXCLUDED_DIRS = new Set([
 const HIDDEN_PREFIX = ".";
 
 type Event = "add" | "change" | "unlink";
+type EntryStatus = "queued" | "active" | "done" | "failed" | "skipped";
 
 interface QueueEntry {
+  id: string;
   vault: string;
   rel: string;
   event: Event;
+  status: EntryStatus;
+  enqueuedAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  exitCode?: number | null;
+  message?: string;
 }
 
 const watchers: FSWatcher[] = [];
 const queue: QueueEntry[] = [];
+const active: QueueEntry[] = [];
+const recent: QueueEntry[] = [];
+const RECENT_MAX = 50;
+let nextEntryId = 1;
 let running = false;
+
+const dashboardEvents = new EventEmitter();
+dashboardEvents.setMaxListeners(0);
+
+export interface DashboardSnapshot {
+  queued: QueueEntry[];
+  active: QueueEntry[];
+  recent: QueueEntry[];
+  concurrency: number;
+  updatedAt: number;
+}
+
+export function getDashboardState(): DashboardSnapshot {
+  return {
+    queued: queue.map((e) => ({ ...e })),
+    active: active.map((e) => ({ ...e })),
+    recent: recent.map((e) => ({ ...e })),
+    concurrency: CONCURRENCY,
+    updatedAt: Date.now(),
+  };
+}
+
+export function subscribeDashboard(listener: (snapshot: DashboardSnapshot) => void): () => void {
+  const handler = () => listener(getDashboardState());
+  dashboardEvents.on("change", handler);
+  return () => dashboardEvents.off("change", handler);
+}
+
+function notifyDashboard(): void {
+  dashboardEvents.emit("change");
+}
+
+function pushRecent(entry: QueueEntry): void {
+  recent.unshift({ ...entry });
+  if (recent.length > RECENT_MAX) recent.length = RECENT_MAX;
+}
+
+function removeFromActive(id: string): void {
+  const idx = active.findIndex((e) => e.id === id);
+  if (idx >= 0) active.splice(idx, 1);
+}
 
 const LOG_REL = path.join(".vault-meta", "watcher.log");
 const STATE_REL = path.join(".vault-meta", "ingest-state.json");
@@ -129,20 +183,30 @@ async function enqueueExistingFiles(vault: string): Promise<void> {
   }
   const state = loadIngestState(vault);
   let skipped = 0;
+  let queued = 0;
   for (const filePath of files) {
     const rel = path.relative(vault, filePath);
     if (!rel) continue;
     const mtime = fs.statSync(filePath).mtimeMs;
     if (state[rel] === mtime) { skipped++; continue; }
     if (!queue.some((q) => q.vault === vault && q.rel === rel && q.event === "add")) {
-      queue.push({ vault, rel, event: "add" });
+      queue.push({
+        id: String(nextEntryId++),
+        vault,
+        rel,
+        event: "add",
+        status: "queued",
+        enqueuedAt: Date.now(),
+      });
+      queued++;
     }
   }
-  if (queue.length === 0) {
+  if (queued === 0) {
     logLine(vault, `initial scan: all ${files.length} file(s) already up to date`);
     return;
   }
   logLine(vault, `initial scan: ${queue.length} file(s) queued, ${skipped} unchanged [queue depth: ${queue.length}]`);
+  notifyDashboard();
   void drain();
 }
 
@@ -184,8 +248,16 @@ function enqueue(vault: string, filePath: string, event: Event): void {
   const rel = path.relative(vault, filePath);
   if (!rel) return;
   if (queue.some((q) => q.vault === vault && q.rel === rel && q.event === event)) return;
-  queue.push({ vault, rel, event });
+  queue.push({
+    id: String(nextEntryId++),
+    vault,
+    rel,
+    event,
+    status: "queued",
+    enqueuedAt: Date.now(),
+  });
   logLine(vault, `enqueue ${event} ${rel} [queue depth: ${queue.length}]`);
+  notifyDashboard();
   void drain();
 }
 
@@ -197,31 +269,51 @@ async function drain(): Promise<void> {
   let completed = 0;
   let lastVault = "";
   try {
-    const active = new Set<Promise<void>>();
+    const inFlight = new Set<Promise<void>>();
 
     const startNext = () => {
-      while (active.size < CONCURRENCY && queue.length > 0) {
+      while (inFlight.size < CONCURRENCY && queue.length > 0) {
         const entry = queue.shift()!;
+        entry.status = "active";
+        entry.startedAt = Date.now();
+        active.push(entry);
         lastVault = entry.vault;
         const mtime = entry.event !== "unlink"
           ? (fs.statSync(path.join(entry.vault, entry.rel), { throwIfNoEntry: false })?.mtimeMs ?? 0)
           : 0;
-        logLine(entry.vault, `start [${active.size + 1}/${CONCURRENCY}] ${entry.event} ${entry.rel} [${queue.length} queued]`);
+        logLine(entry.vault, `start [${active.length}/${CONCURRENCY}] ${entry.event} ${entry.rel} [${queue.length} queued]`);
+        notifyDashboard();
         const p: Promise<void> = runIngest(entry).then((code) => {
-          if (code === 0 && entry.event !== "unlink" && mtime > 0) {
-            saveIngestEntry(entry.vault, entry.rel, mtime);
+          entry.exitCode = code ?? null;
+          entry.endedAt = Date.now();
+          if (code === 0) {
+            entry.status = "done";
+            if (entry.event !== "unlink" && mtime > 0) {
+              saveIngestEntry(entry.vault, entry.rel, mtime);
+            }
+          } else if (code === null) {
+            entry.status = "skipped";
+          } else {
+            entry.status = "failed";
           }
+        }).catch((err) => {
+          entry.endedAt = Date.now();
+          entry.status = "failed";
+          entry.message = (err as Error).message;
         }).finally(() => {
-          active.delete(p);
+          inFlight.delete(p);
+          removeFromActive(entry.id);
+          pushRecent(entry);
           completed++;
+          notifyDashboard();
         });
-        active.add(p);
+        inFlight.add(p);
       }
     };
 
     startNext();
-    while (active.size > 0) {
-      await Promise.race(active);
+    while (inFlight.size > 0) {
+      await Promise.race(inFlight);
       startNext();
     }
 

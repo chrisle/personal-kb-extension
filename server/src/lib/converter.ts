@@ -9,7 +9,12 @@ const PPTX_EXTENSIONS = new Set([".pptx", ".ppt"]);
 const EXCEL_EXTENSIONS = new Set([".xlsx", ".xls"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
 
+// Files to never ingest: scaffolded/managed files that aren't user knowledge.
+const EXCLUDED_BASENAMES = new Set(["CLAUDE.md"]);
+
 export function isIngestible(rel: string): boolean {
+  const base = path.basename(rel);
+  if (EXCLUDED_BASENAMES.has(base)) return false;
   const ext = path.extname(rel).toLowerCase();
   return (
     TEXT_EXTENSIONS.has(ext) ||
