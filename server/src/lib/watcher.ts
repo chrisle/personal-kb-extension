@@ -380,6 +380,8 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
       extractedText,
       `--- END ---`,
       ``,
+      DISCOVER_RULE,
+      ``,
       WRITE_RULE,
     ].join("\n");
   }
@@ -396,6 +398,8 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
       ``,
       IMAGE_INGEST_RULE,
       ``,
+      DISCOVER_RULE,
+      ``,
       WRITE_RULE,
     ].join("\n");
   }
@@ -408,9 +412,19 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
     SOURCE_RULE(basename),
     ``,
     `The source file is at the relative path "${rel}" from the current working directory. Read it directly; do not search for it.`,
+    ``,
+    DISCOVER_RULE,
+    ``,
     WRITE_RULE,
   ].join("\n");
 }
+
+const DISCOVER_RULE = `LINK DISCOVERY (run BEFORE writing any page):
+1. Extract the 3–7 main entities, concepts, or topics this source is about. Include the proposed page titles you intend to create.
+2. For each one, call kb_query with the term. Note which existing pages match.
+3. When you write the new pages, add [[stem]] wikilinks to those existing pages wherever the connection is real (not just a keyword collision). Inline links are preferred; otherwise put them in a "## Related" section at the bottom.
+4. Bidirectional update: for each existing page B you link to from a new page A, append "- [[A-stem]] — <one-line why>" under B's "## Related" section (create the section if missing). This is what makes the graph dense.
+5. If kb_query returns nothing for a term, that's expected on a fresh vault — just skip linking for that term.`;
 
 const WRITE_RULE = `Write every wiki page under wiki/<type-folder>/<domain>/<slug>.md (e.g. wiki/concepts/clearance/risk-rating.md). vault_write rejects single-segment writes at wiki/ root. Allowed at root: index.md, log.md, hot.md, overview.md, README.md. Domain hub pages live at wiki/domains/<slug>.md. After writing, call kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md. Use WIKI.md as the schema reference.`;
 

@@ -8,13 +8,14 @@ Ingest a source document into the knowledge base.
 
 1. If the user provided a file path, call `kb_ingest` with it as the `source` parameter. Otherwise ask which file to ingest.
 2. Read the returned content. Identify the dominant **domain** (a short kebab slug — e.g. `clearance`, `ai-safety`, `accounting`). If the content is genuinely cross-cutting, use `_global`.
-3. Create or update wiki pages, ALWAYS at `wiki/<type-folder>/<domain>/<slug>.md`:
+3. **Link discovery** (before writing): list the 3–7 main entities/concepts/topics in this source plus the page titles you plan to create. For each, call `kb_query` and note matches. When writing, add `[[stem]]` wikilinks to those matches inline or in a "## Related" section. For every existing page B you link from a new page A, also append `- [[A-stem]] — <why>` under B's "## Related" section (create if missing) — bidirectional links are what make the graph dense.
+4. Create or update wiki pages, ALWAYS at `wiki/<type-folder>/<domain>/<slug>.md`:
    - one `source` page summarizing the document
    - `concept` pages for significant ideas
    - `entity` pages for named people / orgs / products / repos
    - `question` pages for open questions raised
    - update relevant `domain` hub page at `wiki/domains/<domain>.md` (create if missing)
-4. Frontmatter on every page (required fields):
+5. Frontmatter on every page (required fields):
    ```yaml
    ---
    type: <concept|entity|source|domain|comparison|question>
@@ -26,10 +27,10 @@ Ingest a source document into the knowledge base.
    tags: [...]
    ---
    ```
-5. Use `[[stem]]` wikilinks for cross-references — never paths. Stems must be unique vault-wide.
-6. Append a single line at the TOP of `wiki/log.md`: `YYYY-MM-DD — ingest: [[source-stem]] (domain: <slug>, +N pages)`.
-7. Call `kb_reindex` to rebuild `wiki/index.md` and `wiki/index/<domain>.md`.
-8. Report: which pages were created or updated, the domain, key insight in one sentence.
+6. Use `[[stem]]` wikilinks for cross-references — never paths. Stems must be unique vault-wide.
+7. Append a single line at the TOP of `wiki/log.md`: `YYYY-MM-DD — ingest: [[source-stem]] (domain: <slug>, +N pages)`.
+8. Call `kb_reindex` to rebuild `wiki/index.md` and `wiki/index/<domain>.md`.
+9. Report: which pages were created or updated, the domain, key insight in one sentence.
 
 ## Path policy
 
