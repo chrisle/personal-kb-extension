@@ -9,6 +9,8 @@ export interface VaultConfig {
   active: string | null;
   autoCommit: boolean;
   autoWatch: boolean;
+  autoLint: boolean;
+  autoLintIntervalHours: number;
 }
 
 export function loadConfigFromArgv(argv: string[]): VaultConfig {
@@ -22,6 +24,9 @@ export function loadConfigFromArgv(argv: string[]): VaultConfig {
   const autoCommit = !["0", "false", "no", "off"].includes(autoCommitRaw.toLowerCase());
   const autoWatchRaw = process.env.OBSIDIAN_AUTO_WATCH ?? "false";
   const autoWatch = ["1", "true", "yes", "on"].includes(autoWatchRaw.toLowerCase());
+  const autoLintRaw = process.env.OBSIDIAN_AUTO_LINT ?? "false";
+  const autoLint = ["1", "true", "yes", "on"].includes(autoLintRaw.toLowerCase());
+  const autoLintIntervalHours = Math.max(1, Number(process.env.OBSIDIAN_AUTO_LINT_INTERVAL_HOURS ?? "6") || 6);
 
   let active: string | null = null;
   if (activeName) {
@@ -31,7 +36,7 @@ export function loadConfigFromArgv(argv: string[]): VaultConfig {
     active = vaults[0];
   }
 
-  return { vaults, active, autoCommit, autoWatch };
+  return { vaults, active, autoCommit, autoWatch, autoLint, autoLintIntervalHours };
 }
 
 let runtimeActive: string | null = null;
@@ -225,9 +230,11 @@ This vault has a persistent, Claude-maintained wiki at \`wiki/\`.
 - Reindex: "reindex" — runs \`kb_reindex\` to rebuild master + sub-indexes
 
 **Skills**
-- \`/kb\` — setup and routing
-- \`/kb-ingest\` — manually ingest a source
-- \`/kb-lint\` — health check
+- \`/kb-query\` — ask any question about the knowledge base
+- \`/kb-view\` — browse the knowledge base like Wikipedia
+- \`/save\` — file the current conversation into the knowledge base
+- \`/kb-ingest\` — manually ingest a source from .raw/
+- \`/kb-lint\` — health check (orphans, broken links)
 - \`/kb-reindex\` — rebuild indexes from frontmatter
 ${CLAUDE_WIKI_END}`;
 

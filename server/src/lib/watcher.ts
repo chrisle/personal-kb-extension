@@ -43,6 +43,33 @@ let nextEntryId = 1;
 let running = false;
 
 const dashboardEvents = new EventEmitter();
+
+// In-memory log ring buffer — shared across watcher and other modules (auto-lint, etc.)
+const LOG_BUFFER_MAX = 500;
+const logBuffer: string[] = [];
+const logLineListeners = new Set<(line: string) => void>();
+
+function pushLogLine(line: string): void {
+  logBuffer.push(line);
+  if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+  for (const l of logLineListeners) l(line);
+}
+
+export function getLogLines(): string[] {
+  return [...logBuffer];
+}
+
+export function subscribeLogLine(listener: (line: string) => void): () => void {
+  logLineListeners.add(listener);
+  return () => logLineListeners.delete(listener);
+}
+
+/** Append a log line from any module (auto-lint, etc.) into the shared buffer. */
+export function appendLog(prefix: string, msg: string): void {
+  const stamp = new Date().toISOString();
+  pushLogLine(`${stamp} [${prefix}] ${msg}`);
+  process.stderr.write(`[${prefix}] ${msg}\n`);
+}
 dashboardEvents.setMaxListeners(0);
 
 export interface DashboardSnapshot {
@@ -114,12 +141,12 @@ export function watcherLog(vault: string, msg: string): void {
 
 function logLine(vault: string, msg: string): void {
   const stamp = new Date().toISOString();
-  const line = `${stamp} ${msg}\n`;
+  pushLogLine(`${stamp} [${path.basename(vault)}] ${msg}`);
   process.stderr.write(`[watcher] ${msg}\n`);
   try {
     const logPath = path.join(vault, LOG_REL);
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    fs.appendFileSync(logPath, line);
+    fs.appendFileSync(logPath, `${stamp} ${msg}\n`);
   } catch {
     // best-effort
   }
