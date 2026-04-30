@@ -227,24 +227,9 @@ async function drain(): Promise<void> {
 
     if (completed > 0 && lastVault) {
       logLine(lastVault, `✓ ingest complete — ${completed} file(s) processed`);
-      notify();
     }
   } finally {
     running = false;
-  }
-}
-
-function notify(): void {
-  try {
-    const cmd =
-      process.platform === "darwin"
-        ? { bin: "afplay", args: ["/System/Library/Sounds/Glass.aiff"] }
-        : process.platform === "win32"
-        ? { bin: "powershell", args: ["-Command", "[console]::beep(1000,300)"] }
-        : { bin: "paplay", args: ["/usr/share/sounds/freedesktop/stereo/complete.oga"] };
-    spawn(cmd.bin, cmd.args, { stdio: "ignore", detached: true }).unref();
-  } catch {
-    // best-effort
   }
 }
 
