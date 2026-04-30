@@ -6,15 +6,20 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --noEmit && node build.mjs",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "chokidar": "^5.0.0"
+    "chokidar": "^5.0.0",
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "^5.7.284",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20.11.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.4.5"
   }
 }
