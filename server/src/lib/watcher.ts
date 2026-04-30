@@ -236,10 +236,13 @@ async function drain(): Promise<void> {
 
 function notify(): void {
   try {
-    spawn("afplay", ["/System/Library/Sounds/Glass.aiff"], {
-      stdio: "ignore",
-      detached: true,
-    }).unref();
+    const cmd =
+      process.platform === "darwin"
+        ? { bin: "afplay", args: ["/System/Library/Sounds/Glass.aiff"] }
+        : process.platform === "win32"
+        ? { bin: "powershell", args: ["-Command", "[console]::beep(1000,300)"] }
+        : { bin: "paplay", args: ["/usr/share/sounds/freedesktop/stereo/complete.oga"] };
+    spawn(cmd.bin, cmd.args, { stdio: "ignore", detached: true }).unref();
   } catch {
     // best-effort
   }
@@ -251,6 +254,8 @@ const SCOPE_RULE = [
   `- Do NOT search /Users, $HOME, ~, or any absolute path outside cwd.`,
   `- Use only relative paths from cwd. The wiki lives at wiki/. Raw sources at .raw/.`,
   `- If the named file does not exist in cwd, STOP. Do not try to locate it elsewhere. Report "file not found" and exit.`,
+  `META FILES: Do NOT create wikilinks to wiki/index.md, wiki/log.md, wiki/hot.md, or WIKI.md from any content page.`,
+  `- These files are managed automatically. Never add [[index]], [[log]], [[hot]], or [[WIKI]] to Related sections or anywhere else in content pages.`,
 ].join("\n");
 
 const SOURCE_RULE = (basename: string) => [
@@ -344,7 +349,11 @@ async function runIngest(entry: QueueEntry): Promise<number | null> {
       detached: false,
       env: {
         ...process.env,
-        PATH: [process.env.PATH, "/opt/homebrew/bin", "/usr/local/bin"].filter(Boolean).join(":"),
+        PATH: [
+          process.env.PATH,
+          path.dirname(process.execPath),
+          ...(process.platform === "darwin" ? ["/opt/homebrew/bin", "/usr/local/bin"] : []),
+        ].filter(Boolean).join(path.delimiter),
       },
     });
     const onChunk = (stream: "stdout" | "stderr") => (buf: Buffer) => {
