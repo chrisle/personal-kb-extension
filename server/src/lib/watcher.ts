@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import chokidar, { type FSWatcher } from "chokidar";
 import { ensureKBScaffolded } from "./vaults.js";
 import { resolveClaudeBin } from "./claude-bin.js";
-import { isIngestible, isOfficeFile, extractText } from "./converter.js";
+import { isIngestible, isOfficeFile, isImageFile, extractText } from "./converter.js";
 
 const EXCLUDED_DIRS = new Set([
   "wiki",
@@ -384,6 +384,22 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
     ].join("\n");
   }
 
+  if (isImageFile(rel)) {
+    return [
+      `kb-ingest ${rel}`,
+      ``,
+      SCOPE_RULE,
+      ``,
+      SOURCE_RULE(basename),
+      ``,
+      `The source is an image at the relative path "${rel}" from the current working directory. Use the Read tool on that exact path — it accepts images directly.`,
+      ``,
+      IMAGE_INGEST_RULE,
+      ``,
+      WRITE_RULE,
+    ].join("\n");
+  }
+
   return [
     `kb-ingest ${rel}`,
     ``,
@@ -397,6 +413,15 @@ function buildPrompt(event: Event, rel: string, extractedText?: string): string 
 }
 
 const WRITE_RULE = `Write every wiki page under wiki/<type-folder>/<domain>/<slug>.md (e.g. wiki/concepts/clearance/risk-rating.md). vault_write rejects single-segment writes at wiki/ root. Allowed at root: index.md, log.md, hot.md, overview.md, README.md. Domain hub pages live at wiki/domains/<slug>.md. After writing, call kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md. Use WIKI.md as the schema reference.`;
+
+const IMAGE_INGEST_RULE = `When extracting from the image:
+1. Transcribe ALL readable text verbatim. Preserve structure: headings stay headings, lists stay lists, tables stay tables (use markdown table syntax).
+2. For each diagram, chart, or flow you detect:
+   - If the structure fits a Mermaid diagram type (flowchart, sequenceDiagram, classDiagram, erDiagram, stateDiagram, gantt, pie, mindmap, gitGraph) — emit a fenced \`\`\`mermaid block with valid syntax. Use exact node labels from the image.
+   - If Mermaid won't capture it (photos, complex visuals, screenshots of UI, freeform sketches) — describe in detail: every labeled element, every connection/relationship, layout, colors if meaningful, and what it appears to convey.
+   - Multiple diagrams → multiple blocks, each with a heading.
+3. The image is the source. File it as a 'source' page at wiki/sources/<domain>/<slug>.md with sections: ## Transcribed Text, ## Diagrams, ## Summary.
+4. Then extract concept/entity/question pages from the content as you would for any source — each gets the same domain.`;
 
 async function runIngest(entry: QueueEntry): Promise<number | null> {
   if (entry.event !== "unlink" && !isIngestible(entry.rel)) {

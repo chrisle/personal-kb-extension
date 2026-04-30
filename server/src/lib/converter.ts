@@ -8,6 +8,7 @@ const DOCX_EXTENSIONS = new Set([".docx", ".doc"]);
 const PPTX_EXTENSIONS = new Set([".pptx", ".ppt"]);
 const EXCEL_EXTENSIONS = new Set([".xlsx", ".xls"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
 // Files to never ingest: scaffolded/managed files that aren't user knowledge.
 const EXCLUDED_BASENAMES = new Set(["CLAUDE.md"]);
@@ -21,7 +22,8 @@ export function isIngestible(rel: string): boolean {
     DOCX_EXTENSIONS.has(ext) ||
     PPTX_EXTENSIONS.has(ext) ||
     EXCEL_EXTENSIONS.has(ext) ||
-    PDF_EXTENSIONS.has(ext)
+    PDF_EXTENSIONS.has(ext) ||
+    IMAGE_EXTENSIONS.has(ext)
   );
 }
 
@@ -33,6 +35,10 @@ export function isOfficeFile(rel: string): boolean {
     EXCEL_EXTENSIONS.has(ext) ||
     PDF_EXTENSIONS.has(ext)
   );
+}
+
+export function isImageFile(rel: string): boolean {
+  return IMAGE_EXTENSIONS.has(path.extname(rel).toLowerCase());
 }
 
 /** Extract plain text from an Office or PDF document. Returns null if extraction fails. */
