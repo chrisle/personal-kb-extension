@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-type AppView = "wiki" | "queue" | "logs";
 type EntryStatus = "queued" | "active" | "done" | "failed" | "skipped";
 type EventType = "add" | "change" | "unlink";
 
@@ -179,7 +177,7 @@ function logLineClass(line: string): string {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Page() {
-  const [view, setView] = useState<AppView>("wiki");
+  const [panel, setPanel] = useState<"none" | "queue" | "logs">("none");
   const [connected, setConnected] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAP);
@@ -311,13 +309,8 @@ export default function Page() {
     }
   }, []);
 
-  // Load index on mount and when switching to wiki view
-  useEffect(() => {
-    if (view === "wiki" && !wikiPage && !wikiLoading) {
-      void loadIndex();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
+  // Load wiki index on mount
+  useEffect(() => { void loadIndex(); }, [loadIndex]);
 
   // Queue SSE
   useEffect(() => {
@@ -361,104 +354,113 @@ export default function Page() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const closePanel = () => setPanel("none");
+  const togglePanel = (p: "queue" | "logs") => setPanel((cur) => cur === p ? "none" : p);
+
   return (
     <div className="app">
       <header className="app-header">
-        <div className="header-left">
-          <button className={`header-title-btn ${view === "wiki" ? "active" : ""}`} onClick={() => { setView("wiki"); goHome(); }}>
-            Personal Knowledge Base
-          </button>
-        </div>
+        <button className="header-title-btn" onClick={goHome}>
+          Personal Knowledge Base
+        </button>
         <nav className="header-nav">
-          <button className={`nav-btn ${view === "wiki" ? "active" : ""}`} onClick={() => setView("wiki")}>Wiki</button>
-          <button className={`nav-btn ${view === "queue" ? "active" : ""}`} onClick={() => setView("queue")}>
-            Queue {snapshot.active.length + snapshot.queued.length > 0 && (
+          <button
+            className={`nav-btn ${panel === "queue" ? "active" : ""}`}
+            onClick={() => togglePanel("queue")}
+          >
+            Queue
+            {snapshot.active.length + snapshot.queued.length > 0 && (
               <span className="nav-badge">{snapshot.active.length + snapshot.queued.length}</span>
             )}
           </button>
-          <button className={`nav-btn ${view === "logs" ? "active" : ""}`} onClick={() => setView("logs")}>Logs</button>
-        </nav>
-        <div className="header-right">
+          <button
+            className={`nav-btn ${panel === "logs" ? "active" : ""}`}
+            onClick={() => togglePanel("logs")}
+          >
+            Logs
+          </button>
           <span className={`status-pill ${connected ? "live" : ""}`}>
             <span className="dot" />
             {connected ? "live" : "reconnecting…"}
           </span>
-        </div>
+        </nav>
       </header>
 
-      {view === "wiki" && (
-        <main className="wiki-main">
-          {/* Search bar */}
-          <div className="wiki-search-bar">
-            <form onSubmit={(e) => { e.preventDefault(); void runSearch(searchQuery); }}>
-              <input
-                className="wiki-search-input"
-                type="text"
-                placeholder="Search the knowledge base…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <button type="submit" className="wiki-search-btn" disabled={searchLoading}>
-                {searchLoading ? "Searching…" : "Search"}
-              </button>
-              {(searchResults !== null || searchQuery) && (
-                <button type="button" className="wiki-search-clear" onClick={() => { setSearchResults(null); setSearchQuery(""); }}>✕</button>
-              )}
-            </form>
+      {/* Wiki — always the main view */}
+      <main className="wiki-main">
+        <div className="wiki-search-bar">
+          <form onSubmit={(e) => { e.preventDefault(); void runSearch(searchQuery); }}>
+            <input
+              className="wiki-search-input"
+              type="text"
+              placeholder="Search the knowledge base…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button type="submit" className="wiki-search-btn" disabled={searchLoading}>
+              {searchLoading ? "Searching…" : "Search"}
+            </button>
+            {(searchResults !== null || searchQuery) && (
+              <button type="button" className="wiki-search-clear" onClick={() => { setSearchResults(null); setSearchQuery(""); }}>✕</button>
+            )}
+          </form>
+        </div>
+
+        {(wikiHistory.length > 0 || (wikiPage && wikiPage.path !== "wiki/index.md")) && (
+          <div className="wiki-breadcrumb">
+            <button className="crumb-btn" onClick={goHome}>Home</button>
+            {wikiHistory.map((h, i) => (
+              <span key={i}>
+                <span className="crumb-sep"> › </span>
+                <button className="crumb-btn" onClick={() => { setWikiHistory((hist) => hist.slice(0, i)); void loadPage(h.path, false); }}>{h.title}</button>
+              </span>
+            ))}
+            {wikiPage && wikiPage.path !== "wiki/index.md" && (
+              <><span className="crumb-sep"> › </span><span className="crumb-current">{wikiTitle}</span></>
+            )}
           </div>
+        )}
 
-          {/* Breadcrumb */}
-          {(wikiHistory.length > 0 || (wikiPage && wikiPage.path !== "wiki/index.md")) && (
-            <div className="wiki-breadcrumb">
-              <button className="crumb-btn" onClick={goHome}>Home</button>
-              {wikiHistory.map((h, i) => (
-                <span key={i}>
-                  <span className="crumb-sep"> › </span>
-                  <button className="crumb-btn" onClick={() => { setWikiHistory((hist) => hist.slice(0, i)); void loadPage(h.path, false); }}>{h.title}</button>
-                </span>
-              ))}
-              {wikiPage && wikiPage.path !== "wiki/index.md" && (
-                <><span className="crumb-sep"> › </span><span className="crumb-current">{wikiTitle}</span></>
-              )}
+        {searchResults !== null && (
+          <div className="wiki-search-results">
+            <div className="search-results-header">
+              {searchResults.length === 0 ? "No results found." : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
             </div>
-          )}
-
-          {/* Search results */}
-          {searchResults !== null && (
-            <div className="wiki-search-results">
-              <div className="search-results-header">
-                {searchResults.length === 0 ? "No results found." : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
+            {searchResults.map((r, i) => (
+              <div key={i} className="search-result" onClick={() => void loadPage(r.path)}>
+                <div className="search-result-title">{r.title}</div>
+                <div className="search-result-path">{r.path}</div>
+                {r.snippet && <div className="search-result-snippet">{r.snippet}</div>}
               </div>
-              {searchResults.map((r, i) => (
-                <div key={i} className="search-result" onClick={() => void loadPage(r.path)}>
-                  <div className="search-result-title">{r.title}</div>
-                  <div className="search-result-path">{r.path}</div>
-                  {r.snippet && <div className="search-result-snippet">{r.snippet}</div>}
-                </div>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
+        )}
 
-          {/* Page content or loading */}
-          {wikiError && <div className="wiki-error">{wikiError}</div>}
-          {wikiLoading && <div className="wiki-loading">Loading…</div>}
-          {!wikiLoading && !wikiError && searchResults === null && wikiBody && (
-            <div className="wiki-content">
-              {wikiTitle && <h1 className="wiki-page-title">{wikiTitle}</h1>}
-              <Markdown content={wikiBody} onWikilink={onWikilink} />
-              {wikiHistory.length > 0 && (
-                <button className="wiki-back-btn" onClick={goBack}>← Back</button>
-              )}
-            </div>
-          )}
-        </main>
-      )}
+        {wikiError && <div className="wiki-error">{wikiError}</div>}
+        {wikiLoading && <div className="wiki-loading">Loading…</div>}
+        {!wikiLoading && !wikiError && searchResults === null && wikiBody && (
+          <div className="wiki-content">
+            {wikiTitle && <h1 className="wiki-page-title">{wikiTitle}</h1>}
+            <Markdown content={wikiBody} onWikilink={onWikilink} />
+            {wikiHistory.length > 0 && (
+              <button className="wiki-back-btn" onClick={goBack}>← Back</button>
+            )}
+          </div>
+        )}
+      </main>
 
-      {view === "queue" && (
-        <main className="queue-main">
+      {/* Drawers — slide in over the wiki */}
+      {panel !== "none" && <div className="drawer-backdrop" onClick={closePanel} />}
+
+      <aside className={`drawer ${panel === "queue" ? "open" : ""}`}>
+        <div className="drawer-header">
+          <span>Ingest Queue</span>
+          <button className="drawer-close" onClick={closePanel}>✕</button>
+        </div>
+        <div className="drawer-body">
           <div className="summary">
             <div className="card"><div className="label">Processing</div>
-              <div className="value">{snapshot.active.length}<span className="value-sub">/ {snapshot.concurrency || "—"}</span></div></div>
+              <div className="value">{snapshot.active.length}<span className="value-sub">/{snapshot.concurrency || "—"}</span></div></div>
             <div className="card"><div className="label">Queued</div><div className="value">{snapshot.queued.length}</div></div>
             <div className="card"><div className="label">Recent</div><div className="value">{snapshot.recent.length}</div></div>
           </div>
@@ -504,32 +506,31 @@ export default function Page() {
               ))}</ul>
             )}
           </section>
-        </main>
-      )}
+        </div>
+      </aside>
 
-      {view === "logs" && (
-        <main className="logs-main">
-          <div className="log-header-bar">
-            <span className="log-count">{logLines.length} lines</span>
+      <aside className={`drawer ${panel === "logs" ? "open" : ""}`}>
+        <div className="drawer-header">
+          <span>Live Logs <span className="drawer-count">{logLines.length}</span></span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button className="log-scroll-btn" onClick={() => {
               const next = !autoScroll; setAutoScroll(next); autoScrollRef.current = next;
               if (next) logBottomRef.current?.scrollIntoView({ behavior: "instant" });
-            }}>
-              {autoScroll ? "auto-scroll on" : "auto-scroll off"}
-            </button>
+            }}>{autoScroll ? "auto-scroll on" : "auto-scroll off"}</button>
+            <button className="drawer-close" onClick={closePanel}>✕</button>
           </div>
-          <div className="log-body" ref={logBodyRef} onScroll={() => {
-            const el = logBodyRef.current; if (!el) return;
-            const at = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-            autoScrollRef.current = at; setAutoScroll(at);
-          }}>
-            {logLines.length === 0 ? <div className="empty">No log output yet.</div> : (
-              logLines.map((line, i) => <div key={i} className={`log-line ${logLineClass(line)}`}>{line}</div>)
-            )}
-            <div ref={logBottomRef} />
-          </div>
-        </main>
-      )}
+        </div>
+        <div className="log-body drawer-log-body" ref={logBodyRef} onScroll={() => {
+          const el = logBodyRef.current; if (!el) return;
+          const at = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          autoScrollRef.current = at; setAutoScroll(at);
+        }}>
+          {logLines.length === 0 ? <div className="empty">No log output yet.</div> : (
+            logLines.map((line, i) => <div key={i} className={`log-line ${logLineClass(line)}`}>{line}</div>)
+          )}
+          <div ref={logBottomRef} />
+        </div>
+      </aside>
     </div>
   );
 }
