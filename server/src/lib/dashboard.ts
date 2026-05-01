@@ -6,9 +6,9 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, type DashboardSnapshot } from "./watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { resolveClaudeBin } from "./claude-bin.js";
 import { log } from "./log.js";
 import type { VaultConfig } from "./vaults.js";
+import { getWikiIndex, extractTopics, findMatchingPages } from "./wiki-index.js";
 
 const DEFAULT_PORT = 3737;
 
@@ -338,12 +338,16 @@ async function buildGraph(vault: string): Promise<GraphData> {
 }
 
 // ── Live notes (real-time KB suggestions from transcript) ──────────────────
+//
+// The transcript window is searched against an in-memory wiki index (built
+// lazily, refreshed every few seconds). Returns categorized bullets in the
+// tens-of-milliseconds range — no model spawn, no network round-trip.
 
 interface LiveNoteItem {
-  path: string;
+  topic: string;   // category the bullet sits under (a phrase from the transcript)
+  path: string;    // wiki-relative path, e.g. "wiki/concepts/foo.md"
   title: string;
-  snippet: string;
-  why: string;
+  bullet: string;  // single-line summary pulled from the page body
 }
 
 interface LiveNotesResult {
@@ -366,127 +370,30 @@ async function readBody(req: http.IncomingMessage, max = 32_000): Promise<string
 }
 
 async function suggestFromTranscript(vault: string, transcript: string): Promise<LiveNotesResult> {
-  const bin = resolveClaudeBin();
-  const model = (process.env.OBSIDIAN_LIVE_MODEL ?? "claude-haiku-4-5-20251001").trim();
-  const safe = transcript.replace(/["`$\\]/g, " ").trim().slice(0, 1200);
-  if (!safe) {
-    appendLog("live-notes", "skipping: empty transcript after sanitize");
-    return { topics: [], items: [] };
-  }
-
-  const tail = safe.length > 100 ? "…" + safe.slice(-100) : safe;
-  appendLog("live-notes", `query model=${model} chars=${safe.length} tail="${tail}"`);
-
-  const prompt = [
-    `You are a real-time research assistant. Below is a recent transcript of someone talking. Your job is to surface relevant pages from the local wiki/ folder so they appear on screen WHILE the person continues the conversation.`,
-    ``,
-    `Transcript (last ~30 seconds):`,
-    `"""${safe}"""`,
-    ``,
-    `Steps:`,
-    `1. Identify 2-5 short topic phrases the person is currently discussing (entities, concepts, projects, names).`,
-    `2. Search wiki/ for matching pages. Use grep:`,
-    `   find wiki/ -name "*.md" | xargs grep -il "<topic>" 2>/dev/null`,
-    `3. Read the top candidates to confirm relevance and extract a short snippet.`,
-    `4. Return ONLY a single JSON object on one line, no markdown, no prose:`,
-    `   {"topics":["topic1","topic2"],"items":[{"path":"wiki/...","title":"...","snippet":"...","why":"..."}]}`,
-    `   - topics: 2-5 short phrases the user is talking about`,
-    `   - items: 0-6 most relevant pages, ordered by relevance`,
-    `   - why: ≤12 words explaining why this page is relevant to what was just said`,
-    `   - snippet: ≤140 chars from the page`,
-    ``,
-    `If nothing in wiki/ is relevant, return: {"topics":[...],"items":[]}`,
-    `Output ONLY the JSON object. No code fences, no other text.`,
-  ].join("\n");
-
   const t0 = Date.now();
+  const safe = transcript.trim().slice(-1500);
+  if (!safe) return { topics: [], items: [] };
 
-  return new Promise((resolve) => {
-    const child = spawn(bin, ["--model", model, "-p", prompt], {
-      cwd: vault,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        PATH: [
-          process.env.PATH,
-          path.dirname(process.execPath),
-          ...(process.platform === "darwin" ? ["/opt/homebrew/bin", "/usr/local/bin"] : []),
-        ].filter(Boolean).join(path.delimiter),
-      },
-    });
+  const index = await getWikiIndex(vault);
+  const tIndex = Date.now() - t0;
 
-    appendLog("live-notes", `spawned claude pid=${child.pid ?? "?"}`);
+  const topics = extractTopics(safe);
+  const matches = findMatchingPages(index, topics);
 
-    let stdout = "";
-    let stderrBytes = 0;
-    let firstByteAt = 0;
-    child.stdout?.on("data", (buf: Buffer) => {
-      if (firstByteAt === 0) {
-        firstByteAt = Date.now();
-        appendLog("live-notes", `first bytes from claude after ${firstByteAt - t0}ms`);
-      }
-      stdout += buf.toString("utf8");
-    });
-    child.stderr?.on("data", (buf: Buffer) => {
-      stderrBytes += buf.length;
-      const text = buf.toString("utf8").trim();
-      if (text) appendLog("live-notes-stderr", text.slice(0, 200));
-    });
-    child.on("error", (err) => {
-      appendLog("live-notes", `spawn error: ${err.message}`);
-      resolve({ topics: [], items: [] });
-    });
+  const items: LiveNoteItem[] = matches.map(({ topic, page }) => ({
+    topic,
+    path: page.path,
+    title: page.title,
+    bullet: page.bullet,
+  }));
 
-    const timeout = setTimeout(() => {
-      appendLog("live-notes", `timed out after 45s — killing pid=${child.pid ?? "?"}`);
-      child.kill();
-      resolve({ topics: [], items: [] });
-    }, 45_000);
+  const topicPreview = topics.length ? topics.slice(0, 4).join(" · ") : "(no topics)";
+  appendLog(
+    "live-notes",
+    `local search: pages=${index.pages.length} topics=[${topicPreview}] matches=${items.length} index=${tIndex}ms total=${Date.now() - t0}ms`,
+  );
 
-    child.on("exit", (code) => {
-      clearTimeout(timeout);
-      const elapsed = Date.now() - t0;
-      appendLog(
-        "live-notes",
-        `claude exit code=${code ?? "?"} in ${elapsed}ms stdout=${stdout.length}B stderr=${stderrBytes}B`,
-      );
-
-      const text = stdout.trim();
-      const start = text.indexOf("{");
-      const end = text.lastIndexOf("}");
-      if (start === -1 || end === -1 || end <= start) {
-        appendLog("live-notes", `no JSON object found in response — preview: ${text.slice(0, 120) || "(empty)"}`);
-        resolve({ topics: [], items: [] });
-        return;
-      }
-      try {
-        const parsed = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-        const topics = Array.isArray(parsed.topics)
-          ? (parsed.topics as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 6)
-          : [];
-        const items = Array.isArray(parsed.items)
-          ? (parsed.items as unknown[]).flatMap((raw): LiveNoteItem[] => {
-              if (!raw || typeof raw !== "object") return [];
-              const r = raw as Record<string, unknown>;
-              if (typeof r.path !== "string" || typeof r.title !== "string") return [];
-              return [{
-                path: r.path,
-                title: r.title,
-                snippet: String(r.snippet ?? "").slice(0, 240),
-                why: String(r.why ?? "").slice(0, 120),
-              }];
-            }).slice(0, 6)
-          : [];
-        const topicPreview = topics.length ? topics.slice(0, 3).join(" · ") : "(no topics)";
-        const itemPreview = items.length ? items.map((i) => i.title).slice(0, 3).join(" · ") : "(no items)";
-        appendLog("live-notes", `parsed topics=[${topicPreview}] items=[${itemPreview}]`);
-        resolve({ topics, items });
-      } catch (err) {
-        appendLog("live-notes", `JSON parse failed: ${(err as Error).message}`);
-        resolve({ topics: [], items: [] });
-      }
-    });
-  });
+  return { topics, items };
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────

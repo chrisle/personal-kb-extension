@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Markdown, stripFrontmatter } from "@/components/markdown";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-interface LiveNoteItem { path: string; title: string; snippet: string; why: string; }
+interface LiveNoteItem { topic: string; path: string; title: string; bullet: string; }
 interface LiveNotesResult { topics: string[]; items: LiveNoteItem[]; }
 
 // Minimal type shim for Web Speech API
@@ -29,11 +30,20 @@ declare global {
   }
 }
 
-const REFRESH_MIN_NEW_CHARS = 80;     // require this much new text since last suggest
-const REFRESH_PAUSE_MS = 1200;        // require this much silence
-const REFRESH_MIN_INTERVAL_MS = 4000; // hard floor between requests
-const TRANSCRIPT_WINDOW_CHARS = 1200; // chunk sent to backend
+const REFRESH_MIN_NEW_CHARS = 40;     // require this much new text since last suggest
+const REFRESH_PAUSE_MS = 600;         // require this much silence
+const REFRESH_MIN_INTERVAL_MS = 1200; // hard floor between requests
+const TRANSCRIPT_WINDOW_CHARS = 1500; // chunk sent to backend
 const FINAL_RING_MAX = 4000;          // keep this many chars of finalized transcript on screen
+
+// Map "wiki/concepts/foo.md" → "/concepts/foo" so the Open-full-page link
+// lands on the wiki page route.
+function pathToUrl(rel: string): string {
+  if (!rel || rel === "wiki/index.md") return "/";
+  const stripped = rel.replace(/^wiki\//, "").replace(/\.md$/, "");
+  if (!stripped) return "/";
+  return "/" + stripped.split("/").map(encodeURIComponent).join("/");
+}
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -51,7 +61,12 @@ export default function LiveNotesPage() {
   const [items, setItems] = useState<LiveNoteItem[]>([]);
   const [topics, setTopics] = useState<string[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const [lastSuggestAt, setLastSuggestAt] = useState(0);
+  const [, setLastSuggestAt] = useState(0);
+
+  // Side-panel state (clicking a bullet opens an inline preview, not a tab)
+  const [selected, setSelected] = useState<LiveNoteItem | null>(null);
+  const [pageContent, setPageContent] = useState<string>("");
+  const [pageLoading, setPageLoading] = useState(false);
 
   // Audio source state
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -183,20 +198,17 @@ export default function LiveNotesPage() {
       const tick = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteTimeDomainData(buf);
-        // RMS of the centered waveform
         let sum = 0;
         for (let i = 0; i < buf.length; i++) {
           const v = (buf[i] - 128) / 128;
           sum += v * v;
         }
         const rms = Math.sqrt(sum / buf.length);
-        // Light compression for visual: sqrt + clamp
         setAudioLevel(Math.min(1, Math.sqrt(rms) * 2));
         meterRafRef.current = requestAnimationFrame(tick);
       };
       tick();
 
-      // After permission, device labels become available — refresh list
       void refreshDevices();
       return stream;
     } catch (e) {
@@ -242,14 +254,12 @@ export default function LiveNotesPage() {
       setLastSpeechAt(Date.now());
     };
     r.onerror = (e) => {
-      // 'no-speech' and 'aborted' are routine — ignore
       if (e.error !== "no-speech" && e.error !== "aborted") {
         setErrMsg(`Speech error: ${e.error}`);
       }
     };
     r.onend = () => {
       setListening(false);
-      // Auto-restart if user still wants to listen (browser auto-stops periodically)
       if (wantListeningRef.current) {
         try { r.start(); } catch { /* ignore */ }
       }
@@ -260,7 +270,6 @@ export default function LiveNotesPage() {
   const startListening = useCallback(async () => {
     setErrMsg("");
     wantListeningRef.current = true;
-    // Claim the chosen device first so the browser routes the speech recognizer to it.
     const stream = await acquireDevice(deviceIdRef.current);
     if (!stream) { wantListeningRef.current = false; return; }
     let r = recRef.current;
@@ -286,11 +295,11 @@ export default function LiveNotesPage() {
     if (typeof window !== "undefined") {
       try { window.localStorage.setItem("ln-device", newId); } catch { /* ignore */ }
     }
-    if (!wantListeningRef.current) return; // not currently listening — just remember the pick
+    if (!wantListeningRef.current) return;
     pushActivity(`${stamp()} switching device…`);
     const r = recRef.current;
     if (r) { try { r.abort(); } catch { /* ignore */ } }
-    recRef.current = null; // force rebuild on next start
+    recRef.current = null;
     const stream = await acquireDevice(newId);
     if (!stream) { wantListeningRef.current = false; return; }
     const fresh = buildRecognizer();
@@ -298,7 +307,6 @@ export default function LiveNotesPage() {
     if (fresh) { try { fresh.start(); } catch { /* ignore */ } }
   }, [acquireDevice, buildRecognizer, pushActivity]);
 
-  // Restore last device pick (ignore stale "default" sentinel)
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -307,8 +315,6 @@ export default function LiveNotesPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // Auto-select first available device once enumeration finishes,
-  // if none is currently picked or the picked one is no longer present
   useEffect(() => {
     if (devices.length === 0) return;
     const stillValid = deviceId && devices.some((d) => d.deviceId === deviceId);
@@ -317,7 +323,6 @@ export default function LiveNotesPage() {
     if (first) setDeviceId(first.deviceId);
   }, [devices, deviceId]);
 
-  // Restore last layout split
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -329,7 +334,7 @@ export default function LiveNotesPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // Drag-to-resize between transcript and context panes
+  // Drag-to-resize between transcript and bullet panes
   const onDividerMouseDown = useCallback((ev: React.MouseEvent) => {
     ev.preventDefault();
     draggingRef.current = true;
@@ -343,7 +348,6 @@ export default function LiveNotesPage() {
       const rect = container.getBoundingClientRect();
       let frac = (e.clientY - rect.top) / rect.height;
       if (!Number.isFinite(frac)) return;
-      // Clamp to a useful range
       frac = Math.max(0.1, Math.min(0.7, frac));
       setTopFraction(frac);
     };
@@ -360,11 +364,9 @@ export default function LiveNotesPage() {
     document.addEventListener("mouseup", onUp);
   }, []);
 
-  // Keep latest topFraction available to the mouseup handler without re-binding
   const topFractionRef = useRef(topFraction);
   topFractionRef.current = topFraction;
 
-  // Keyboard accessibility for the divider
   const onDividerKeyDown = useCallback((e: React.KeyboardEvent) => {
     const STEP = 0.02;
     if (e.key === "ArrowUp") { e.preventDefault(); setTopFraction((f) => Math.max(0.1, f - STEP)); }
@@ -377,6 +379,8 @@ export default function LiveNotesPage() {
     setInterim("");
     setItems([]);
     setTopics([]);
+    setSelected(null);
+    setPageContent("");
     lastSuggestedFinalLenRef.current = 0;
   }, []);
 
@@ -416,18 +420,17 @@ export default function LiveNotesPage() {
       pushActivity(
         `${stamp()} ← ${elapsed}ms · topics=${data.topics?.length ?? 0} items=${data.items?.length ?? 0}`,
       );
-      setItems(mergeItems(items, data.items ?? []));
-      setTopics(data.topics ?? []);
+      setItems((prev) => mergeItems(prev, data.items ?? []));
+      setTopics((prev) => mergeTopics(prev, data.topics ?? []));
     } catch (e) {
       pushActivity(`${stamp()} ✗ network error: ${(e as Error).message}`);
     } finally {
       inFlightRef.current = false;
       setSuggestLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pushActivity]);
 
-  // Smart trigger loop: tick every 400ms and decide whether to fetch
+  // Smart trigger loop: tick every 250ms and decide whether to fetch
   useEffect(() => {
     const id = setInterval(() => {
       const now = Date.now();
@@ -436,7 +439,7 @@ export default function LiveNotesPage() {
       if (newChars >= REFRESH_MIN_NEW_CHARS && sincePause >= REFRESH_PAUSE_MS) {
         void requestSuggestions();
       }
-    }, 400);
+    }, 250);
     return () => clearInterval(id);
   }, [requestSuggestions]);
 
@@ -450,8 +453,7 @@ export default function LiveNotesPage() {
     };
   }, [stopMediaCapture]);
 
-  // Subscribe to server log SSE — filter for live-notes events so we can show
-  // them inline on this page instead of forcing the user to open the Logs drawer.
+  // Subscribe to server log SSE — filter for live-notes events
   useEffect(() => {
     const source = new EventSource("/api/logs");
     const isRelevant = (line: string) => /\[live-notes(?:-stderr)?\]/.test(line);
@@ -486,6 +488,65 @@ export default function LiveNotesPage() {
     pushActivity(`${stamp()} ${listening ? "🎤 listening started" : "⏸ listening stopped"}`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listening]);
+
+  // Group items by topic for rendering. Topics keep their first-seen order;
+  // the group header text matches the topic phrase from the transcript.
+  const grouped = useMemo(() => {
+    const map = new Map<string, LiveNoteItem[]>();
+    for (const it of items) {
+      const list = map.get(it.topic);
+      if (list) list.push(it);
+      else map.set(it.topic, [it]);
+    }
+    return [...map.entries()];
+  }, [items]);
+
+  // Open the side panel preview for a bullet (no new tab)
+  const openInPanel = useCallback(async (item: LiveNoteItem) => {
+    setSelected(item);
+    setPageLoading(true);
+    setPageContent("");
+    try {
+      const r = await fetch(`/api/wiki?path=${encodeURIComponent(item.path)}`);
+      if (!r.ok) {
+        setPageContent(`Failed to load (${r.status})`);
+        return;
+      }
+      const json = await r.json() as { content: string };
+      const { body } = stripFrontmatter(json.content);
+      setPageContent(body);
+    } catch {
+      setPageContent("Network error loading page");
+    } finally {
+      setPageLoading(false);
+    }
+  }, []);
+
+  // Wikilinks inside the side panel ask the server to launch the file in
+  // the user's default app (matches graph-side-panel behavior).
+  const onPanelWikilink = useCallback(async (stem: string) => {
+    try {
+      const r = await fetch(`/api/wiki/open?stem=${encodeURIComponent(stem)}`);
+      if (!r.ok && r.status === 404) {
+        setPageContent(`Page "${stem}" not found`);
+      }
+    } catch {
+      // network error is silent — panel still shows current content
+    }
+  }, []);
+
+  const closePanel = useCallback(() => {
+    setSelected(null);
+    setPageContent("");
+  }, []);
+
+  // Esc closes the side panel
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePanel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, closePanel]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -539,7 +600,7 @@ export default function LiveNotesPage() {
             Clear
           </button>
           <span className="ln-status">
-            {suggestLoading ? "Refreshing context…"
+            {suggestLoading ? "Searching wiki…"
               : !listening && finalized ? "Paused"
               : listening && newCharsPending > 0 ? `+${newCharsPending} chars buffered`
               : listening ? "Listening for speech…"
@@ -602,7 +663,7 @@ export default function LiveNotesPage() {
           <span className="ln-divider-grip" />
         </div>
 
-        {/* Bottom: KB context */}
+        {/* Bottom: KB context — bullets categorized by topic */}
         <section className="ln-context-pane" style={{ flexBasis: `${(1 - topFraction) * 100}%` }}>
           <div className="ln-context-header">
             <div className="ln-pane-label">Knowledge in context</div>
@@ -615,34 +676,48 @@ export default function LiveNotesPage() {
             )}
           </div>
 
-          {items.length === 0 ? (
+          {grouped.length === 0 ? (
             <div className="ln-empty">
               {finalized
                 ? "No matching pages yet — keep talking."
                 : "When you start speaking, relevant pages from your knowledge base will appear here."}
             </div>
           ) : (
-            <div className="ln-cards">
-              {items.map((item) => (
-                <a
-                  key={item.path}
-                  className="ln-card"
-                  href={`/?path=${encodeURIComponent(item.path)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <div className="ln-card-title">{item.title}</div>
-                  {item.why && <div className="ln-card-why">{item.why}</div>}
-                  {item.snippet && <div className="ln-card-snippet">{item.snippet}</div>}
-                  <div className="ln-card-path">{item.path}</div>
-                </a>
+            <div className="ln-bullets">
+              {grouped.map(([topic, list]) => (
+                <div key={topic} className="ln-topic-group">
+                  <div className="ln-topic-heading">{topic}</div>
+                  <ul className="ln-topic-list">
+                    {list.map((item) => {
+                      const active = selected?.path === item.path && selected?.topic === item.topic;
+                      return (
+                        <li key={`${topic}|${item.path}`} className={`ln-bullet ${active ? "active" : ""}`}>
+                          <button
+                            type="button"
+                            className="ln-bullet-btn"
+                            onClick={() => void openInPanel(item)}
+                            title={item.path}
+                          >
+                            <span className="ln-bullet-title">{item.title}</span>
+                            {item.bullet && (
+                              <>
+                                <span className="ln-bullet-sep"> — </span>
+                                <span className="ln-bullet-text">{item.bullet}</span>
+                              </>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               ))}
             </div>
           )}
         </section>
       </div>
 
-      {/* Activity strip — fixed bottom, shows what the pipeline is doing */}
+      {/* Activity strip — fixed bottom */}
       <aside className={`ln-activity ${showActivity ? "open" : "collapsed"}`}>
         <div className="ln-activity-bar">
           <button className="ln-activity-toggle" onClick={() => setShowActivity((v) => !v)}>
@@ -665,13 +740,39 @@ export default function LiveNotesPage() {
           </div>
         )}
       </aside>
+
+      {/* Side panel — bullet click opens the wiki page inline */}
+      {selected && (
+        <>
+          <div className="ln-side-backdrop" onClick={closePanel} />
+          <aside className="ln-side-panel">
+            <header className="ln-side-header">
+              <div className="ln-side-title">{selected.title}</div>
+              <button className="ln-side-close" onClick={closePanel} aria-label="Close">×</button>
+            </header>
+            <div className="ln-side-meta">
+              <span className="ln-side-tag">{selected.topic}</span>
+              <span className="ln-side-path">{selected.path}</span>
+            </div>
+            <div className="ln-side-body">
+              {pageLoading
+                ? <div className="ln-side-loading">Loading…</div>
+                : <Markdown content={pageContent} onWikilink={onPanelWikilink} />}
+            </div>
+            <footer className="ln-side-footer">
+              <a className="ln-side-open" href={pathToUrl(selected.path)} target="_blank" rel="noreferrer">
+                Open full page →
+              </a>
+            </footer>
+          </aside>
+        </>
+      )}
     </div>
   );
 }
 
 // Strip ISO timestamp + leading [live-notes] tag → "HH:MM:SS [tag] message"
 function formatServerLogLine(raw: string): string {
-  // Format from appendLog: "<ISO timestamp> [<prefix>] <message>"
   const m = raw.match(/^(\S+)\s+\[(live-notes(?:-stderr)?)\]\s+(.*)$/);
   if (!m) return raw;
   const [, iso, tag, msg] = m;
@@ -683,19 +784,49 @@ function formatServerLogLine(raw: string): string {
   return `${time} [${tagShort}] ${msg}`;
 }
 
-// Merge new items with existing list: keep stable cards, swap in new ones,
-// drop ones that disappeared. This avoids the "page flickers" feeling.
+// Accumulate items as the conversation evolves: keep every (topic, path)
+// bullet that has ever surfaced, refresh its bullet text on re-match,
+// append new ones to the end. Capped to keep the view readable.
 function mergeItems(prev: LiveNoteItem[], next: LiveNoteItem[]): LiveNoteItem[] {
-  if (next.length === 0) return prev; // don't blank everything if model returns nothing transient
-  const nextByPath = new Map(next.map((i) => [i.path, i]));
-  const ordered: LiveNoteItem[] = [];
-  // Keep prev items that are still relevant, in their original order
-  for (const p of prev) {
-    const updated = nextByPath.get(p.path);
-    if (updated) { ordered.push(updated); nextByPath.delete(p.path); }
+  if (next.length === 0) return prev;
+  const keyOf = (it: LiveNoteItem) => `${it.topic}|${it.path}`;
+  const byKey = new Map<string, LiveNoteItem>();
+  for (const p of prev) byKey.set(keyOf(p), p);
+  for (const n of next) {
+    const k = keyOf(n);
+    const existing = byKey.get(k);
+    // Refresh bullet text if it's non-empty (new pass might have a better one)
+    byKey.set(k, existing ? { ...existing, bullet: n.bullet || existing.bullet } : n);
   }
-  // Append brand-new items in the order the model returned them
-  for (const n of next) if (nextByPath.has(n.path)) ordered.push(n);
-  // Keep at most 6
-  return ordered.slice(0, 6);
+  // Preserve insertion order: prev first (stable), then any genuinely new ones
+  const ordered: LiveNoteItem[] = [];
+  const seen = new Set<string>();
+  for (const p of prev) {
+    const k = keyOf(p);
+    const cur = byKey.get(k);
+    if (cur) { ordered.push(cur); seen.add(k); }
+  }
+  for (const n of next) {
+    const k = keyOf(n);
+    if (seen.has(k)) continue;
+    ordered.push(byKey.get(k)!);
+    seen.add(k);
+  }
+  // Cap to keep the surface manageable; oldest items drop off when full.
+  const MAX = 60;
+  return ordered.length > MAX ? ordered.slice(ordered.length - MAX) : ordered;
+}
+
+// Topics accumulate similarly so the chip strip reflects the running theme.
+function mergeTopics(prev: string[], next: string[]): string[] {
+  const seen = new Set(prev.map((t) => t.toLowerCase()));
+  const merged = [...prev];
+  for (const t of next) {
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    merged.push(t);
+  }
+  const MAX = 12;
+  return merged.length > MAX ? merged.slice(merged.length - MAX) : merged;
 }
