@@ -356,7 +356,12 @@ export default function GraphPage() {
       const { w, h } = sizeRef.current;
       const span = Math.max(maxX - minX, maxY - minY) + 80;
       const fit = Math.min(w, h) / Math.max(span, 1);
-      cameraRef.current = { x: 0, y: 0, zoom: Math.max(0.2, Math.min(1.4, fit)) };
+      const zoom = Math.max(0.2, Math.min(1.4, fit));
+      // Pan so the bounding box centroid lands at the canvas center. The render
+      // transform is (w/2 + cam.x + worldX*zoom), so cam.x = -centerX*zoom.
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      cameraRef.current = { x: -centerX * zoom, y: -centerY * zoom, zoom };
     } else if (sim.length === 0) {
       cameraRef.current = { x: 0, y: 0, zoom: 1 };
     }
