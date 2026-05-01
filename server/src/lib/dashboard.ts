@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, type DashboardSnapshot } from "./watcher.js";
+import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, type DashboardSnapshot } from "./watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { resolveClaudeBin } from "./claude-bin.js";
 import { log } from "./log.js";
@@ -133,23 +133,273 @@ interface SearchResult {
   snippet: string;
 }
 
-async function searchViaClaudeP(vault: string, query: string): Promise<SearchResult[]> {
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function searchWiki(vault: string, query: string): Promise<SearchResult[]> {
+  const t0 = Date.now();
+  const tokens = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+
+  const wikiDir = path.join(vault, "wiki");
+  if (!fs.existsSync(wikiDir)) {
+    appendLog("search", `no wiki/ dir at ${wikiDir}`);
+    return [];
+  }
+
+  const files: string[] = [];
+  await collectMdFiles(wikiDir, files);
+
+  interface Scored { result: SearchResult; score: number; }
+  const scored: Scored[] = [];
+
+  for (const f of files) {
+    const content = await fsp.readFile(f, "utf8").catch(() => "");
+    if (!content) continue;
+    const lower = content.toLowerCase();
+
+    // Require all tokens present (AND search)
+    if (!tokens.every((t) => lower.includes(t))) continue;
+
+    const fm = parseFrontmatter(content);
+    const stem = path.basename(f, ".md");
+    const title = (fm.title as string) || stem;
+    const titleLower = title.toLowerCase();
+    const pathLower = f.toLowerCase();
+
+    // Score: title matches dominate, then filename, then body hit count
+    let score = 0;
+    for (const t of tokens) {
+      if (titleLower.includes(t)) score += 20;
+      if (pathLower.includes(t)) score += 5;
+      const hits = (lower.match(new RegExp(escapeRegex(t), "g")) || []).length;
+      score += Math.min(hits, 8);
+    }
+
+    // Snippet: first non-frontmatter line containing any token
+    let snippet = "";
+    const lines = content.replace(/^---\n[\s\S]*?\n---\n/, "").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const ll = trimmed.toLowerCase();
+      if (tokens.some((t) => ll.includes(t))) {
+        snippet = trimmed.slice(0, 200);
+        break;
+      }
+    }
+
+    const rel = path.relative(vault, f).replace(/\\/g, "/");
+    scored.push({ result: { path: rel, title, snippet }, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const results = scored.slice(0, 20).map((s) => s.result);
+
+  const elapsed = Date.now() - t0;
+  const titlePreview = results.length ? results.slice(0, 3).map((r) => r.title).join(" · ") : "(no results)";
+  appendLog(
+    "search",
+    `scanned=${files.length} matched=${results.length} ${elapsed}ms top=[${titlePreview}]`,
+  );
+  return results;
+}
+
+// ── Graph (nodes + edges from wikilinks) ───────────────────────────────────
+
+interface GraphNode {
+  id: string;        // wiki-relative path like "wiki/concepts/foo.md"
+  stem: string;      // basename without .md
+  title: string;
+  domain: string;
+  type: string;
+  degree: number;    // total connections (in + out)
+}
+
+interface GraphEdge {
+  source: string;    // node id
+  target: string;    // node id
+}
+
+interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+// Convert a .obsidianignore-style pattern to a tester for vault-relative paths.
+// Supports: trailing-slash directories, * (no slash), ** (any depth), bare names treated as both files and dir prefixes.
+function compileIgnorePattern(raw: string): (rel: string) => boolean {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith("#")) return () => false;
+  const isDir = trimmed.endsWith("/");
+  const pattern = isDir ? trimmed.slice(0, -1) : trimmed;
+
+  if (isDir) {
+    return (rel) => rel === pattern || rel.startsWith(pattern + "/");
+  }
+  if (!pattern.includes("*")) {
+    // Treat plain entries as both exact file and directory prefix (mirrors gitignore behavior for ".raw", ".vault-meta")
+    return (rel) => rel === pattern || rel.startsWith(pattern + "/");
+  }
+  // Translate glob → regex. ** = any chars including /, * = anything but /
+  const re = "^" + pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "::DS::")
+    .replace(/\*/g, "[^/]*")
+    .replace(/::DS::/g, ".*") + "$";
+  const compiled = new RegExp(re);
+  return (rel) => compiled.test(rel);
+}
+
+async function loadObsidianIgnore(vault: string): Promise<((rel: string) => boolean)[]> {
+  const file = path.join(vault, ".obsidianignore");
+  try {
+    const text = await fsp.readFile(file, "utf8");
+    return text.split(/\r?\n/).map(compileIgnorePattern);
+  } catch {
+    return [];
+  }
+}
+
+async function buildGraph(vault: string): Promise<GraphData> {
+  const wikiDir = path.join(vault, "wiki");
+  if (!fs.existsSync(wikiDir)) return { nodes: [], edges: [] };
+
+  const files: string[] = [];
+  await collectMdFiles(wikiDir, files);
+
+  const ignoreTests = await loadObsidianIgnore(vault);
+  const isIgnored = (rel: string) => ignoreTests.some((t) => t(rel));
+
+  // First pass: gather page metadata, build stem → path index
+  interface PageInfo { rel: string; stem: string; title: string; domain: string; type: string; content: string; }
+  const pages: PageInfo[] = [];
+  const stemIndex = new Map<string, string>();   // stem → rel
+  const pathIndex = new Map<string, string>();   // rel-without-ext (e.g. "index/clearance") → rel
+
+  for (const f of files) {
+    const rel = path.relative(vault, f).replace(/\\/g, "/");
+    if (isIgnored(rel)) continue;
+    const content = await fsp.readFile(f, "utf8").catch(() => "");
+    if (!content) continue;
+    const fm = parseFrontmatter(content);
+    const stem = path.basename(f, ".md");
+    const title = (fm.title as string) || stem;
+    const domain = (fm.domain as string) || "_global";
+    const type = (fm.type as string) || "";
+    pages.push({ rel, stem, title, domain, type, content });
+    if (!stemIndex.has(stem)) stemIndex.set(stem, rel);
+    const noExt = rel.replace(/^wiki\//, "").replace(/\.md$/, "");
+    pathIndex.set(noExt, rel);
+  }
+
+  // Second pass: extract wikilinks → edges
+  const edgeSet = new Set<string>();   // dedupe via "src→dst"
+  const edges: GraphEdge[] = [];
+  const wikilinkRe = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
+
+  for (const p of pages) {
+    // Strip frontmatter so [[]] in metadata doesn't double-count
+    const body = p.content.replace(/^---\n[\s\S]*?\n---\n/, "");
+    let m: RegExpExecArray | null;
+    while ((m = wikilinkRe.exec(body)) !== null) {
+      const target = m[1].trim();
+      if (!target) continue;
+      // Resolve target → rel
+      let targetRel: string | undefined = pathIndex.get(target);
+      if (!targetRel) targetRel = stemIndex.get(target);
+      if (!targetRel) continue;
+      if (targetRel === p.rel) continue;       // skip self-links
+      const key = `${p.rel}→${targetRel}`;
+      if (edgeSet.has(key)) continue;
+      edgeSet.add(key);
+      edges.push({ source: p.rel, target: targetRel });
+    }
+  }
+
+  // Compute degree for each node
+  const degree = new Map<string, number>();
+  for (const e of edges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+
+  const nodes: GraphNode[] = pages.map((p) => ({
+    id: p.rel,
+    stem: p.stem,
+    title: p.title,
+    domain: p.domain,
+    type: p.type,
+    degree: degree.get(p.rel) ?? 0,
+  }));
+
+  return { nodes, edges };
+}
+
+// ── Live notes (real-time KB suggestions from transcript) ──────────────────
+
+interface LiveNoteItem {
+  path: string;
+  title: string;
+  snippet: string;
+  why: string;
+}
+
+interface LiveNotesResult {
+  topics: string[];
+  items: LiveNoteItem[];
+}
+
+async function readBody(req: http.IncomingMessage, max = 32_000): Promise<string> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  return new Promise((resolve, reject) => {
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > max) { req.destroy(); reject(new Error("payload too large")); return; }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+async function suggestFromTranscript(vault: string, transcript: string): Promise<LiveNotesResult> {
   const bin = resolveClaudeBin();
-  const model = (process.env.OBSIDIAN_INGEST_MODEL ?? "claude-sonnet-4-6").trim();
-  const safeQuery = query.replace(/["`$\\]/g, " ").trim().slice(0, 200);
+  const model = (process.env.OBSIDIAN_LIVE_MODEL ?? "claude-haiku-4-5-20251001").trim();
+  const safe = transcript.replace(/["`$\\]/g, " ").trim().slice(0, 1200);
+  if (!safe) {
+    appendLog("live-notes", "skipping: empty transcript after sanitize");
+    return { topics: [], items: [] };
+  }
+
+  const tail = safe.length > 100 ? "…" + safe.slice(-100) : safe;
+  appendLog("live-notes", `query model=${model} chars=${safe.length} tail="${tail}"`);
 
   const prompt = [
-    `Search the wiki/ folder for pages about: ${safeQuery}`,
+    `You are a real-time research assistant. Below is a recent transcript of someone talking. Your job is to surface relevant pages from the local wiki/ folder so they appear on screen WHILE the person continues the conversation.`,
+    ``,
+    `Transcript (last ~30 seconds):`,
+    `"""${safe}"""`,
     ``,
     `Steps:`,
-    `1. Use bash to find matching files (case-insensitive grep):`,
-    `   find wiki/ -name "*.md" | xargs grep -il "${safeQuery}" 2>/dev/null | head -20`,
-    `2. For each matching file, read it to extract the frontmatter "title:" field and the best matching line as a snippet.`,
-    `3. Output ONLY valid JSON objects, one per line, no markdown, no other text:`,
-    `{"path":"wiki/concepts/domain/slug.md","title":"Page Title","snippet":"Relevant excerpt here..."}`,
+    `1. Identify 2-5 short topic phrases the person is currently discussing (entities, concepts, projects, names).`,
+    `2. Search wiki/ for matching pages. Use grep:`,
+    `   find wiki/ -name "*.md" | xargs grep -il "<topic>" 2>/dev/null`,
+    `3. Read the top candidates to confirm relevance and extract a short snippet.`,
+    `4. Return ONLY a single JSON object on one line, no markdown, no prose:`,
+    `   {"topics":["topic1","topic2"],"items":[{"path":"wiki/...","title":"...","snippet":"...","why":"..."}]}`,
+    `   - topics: 2-5 short phrases the user is talking about`,
+    `   - items: 0-6 most relevant pages, ordered by relevance`,
+    `   - why: ≤12 words explaining why this page is relevant to what was just said`,
+    `   - snippet: ≤140 chars from the page`,
     ``,
-    `Max 10 results. If no files match, output nothing.`,
+    `If nothing in wiki/ is relevant, return: {"topics":[...],"items":[]}`,
+    `Output ONLY the JSON object. No code fences, no other text.`,
   ].join("\n");
+
+  const t0 = Date.now();
 
   return new Promise((resolve) => {
     const child = spawn(bin, ["--model", model, "-p", prompt], {
@@ -165,26 +415,76 @@ async function searchViaClaudeP(vault: string, query: string): Promise<SearchRes
       },
     });
 
+    appendLog("live-notes", `spawned claude pid=${child.pid ?? "?"}`);
+
     let stdout = "";
-    child.stdout?.on("data", (buf: Buffer) => { stdout += buf.toString("utf8"); });
-    child.on("error", () => resolve([]));
-
-    const timeout = setTimeout(() => { child.kill(); resolve([]); }, 60_000);
-
-    child.on("exit", () => {
-      clearTimeout(timeout);
-      const results: SearchResult[] = [];
-      for (const line of stdout.split("\n")) {
-        const t = line.trim();
-        if (!t.startsWith("{")) continue;
-        try {
-          const r = JSON.parse(t) as Record<string, unknown>;
-          if (typeof r.path === "string" && typeof r.title === "string") {
-            results.push({ path: r.path, title: r.title, snippet: String(r.snippet ?? "") });
-          }
-        } catch { /* skip malformed line */ }
+    let stderrBytes = 0;
+    let firstByteAt = 0;
+    child.stdout?.on("data", (buf: Buffer) => {
+      if (firstByteAt === 0) {
+        firstByteAt = Date.now();
+        appendLog("live-notes", `first bytes from claude after ${firstByteAt - t0}ms`);
       }
-      resolve(results);
+      stdout += buf.toString("utf8");
+    });
+    child.stderr?.on("data", (buf: Buffer) => {
+      stderrBytes += buf.length;
+      const text = buf.toString("utf8").trim();
+      if (text) appendLog("live-notes-stderr", text.slice(0, 200));
+    });
+    child.on("error", (err) => {
+      appendLog("live-notes", `spawn error: ${err.message}`);
+      resolve({ topics: [], items: [] });
+    });
+
+    const timeout = setTimeout(() => {
+      appendLog("live-notes", `timed out after 45s — killing pid=${child.pid ?? "?"}`);
+      child.kill();
+      resolve({ topics: [], items: [] });
+    }, 45_000);
+
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      const elapsed = Date.now() - t0;
+      appendLog(
+        "live-notes",
+        `claude exit code=${code ?? "?"} in ${elapsed}ms stdout=${stdout.length}B stderr=${stderrBytes}B`,
+      );
+
+      const text = stdout.trim();
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start === -1 || end === -1 || end <= start) {
+        appendLog("live-notes", `no JSON object found in response — preview: ${text.slice(0, 120) || "(empty)"}`);
+        resolve({ topics: [], items: [] });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+        const topics = Array.isArray(parsed.topics)
+          ? (parsed.topics as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 6)
+          : [];
+        const items = Array.isArray(parsed.items)
+          ? (parsed.items as unknown[]).flatMap((raw): LiveNoteItem[] => {
+              if (!raw || typeof raw !== "object") return [];
+              const r = raw as Record<string, unknown>;
+              if (typeof r.path !== "string" || typeof r.title !== "string") return [];
+              return [{
+                path: r.path,
+                title: r.title,
+                snippet: String(r.snippet ?? "").slice(0, 240),
+                why: String(r.why ?? "").slice(0, 120),
+              }];
+            }).slice(0, 6)
+          : [];
+        const topicPreview = topics.length ? topics.slice(0, 3).join(" · ") : "(no topics)";
+        const itemPreview = items.length ? items.map((i) => i.title).slice(0, 3).join(" · ") : "(no items)";
+        appendLog("live-notes", `parsed topics=[${topicPreview}] items=[${itemPreview}]`);
+        resolve({ topics, items });
+      } catch (err) {
+        appendLog("live-notes", `JSON parse failed: ${(err as Error).message}`);
+        resolve({ topics: [], items: [] });
+      }
     });
   });
 }
@@ -263,13 +563,95 @@ export function startDashboard(cfg: VaultConfig): void {
       return;
     }
 
+    // Open a wiki file in the OS default app (Obsidian, VS Code, Finder, etc.)
+    // Accepts either ?stem= (basename or path-style wikilink) or ?path= (full
+    // wiki-relative path). Used by the graph side-panel preview so clicking a
+    // referenced file launches it in the user's editor instead of just
+    // navigating within the dashboard.
+    if (url.pathname === "/api/wiki/open") {
+      const vault = getVaultPath();
+      if (!vault) { sendJson(res, 503, { error: "No active vault" }); return; }
+      const pathParam = url.searchParams.get("path");
+      const stemParam = url.searchParams.get("stem");
+      let rel: string | null = null;
+      if (pathParam) {
+        const safe = safeWikiPath(vault, pathParam);
+        if (!safe) { sendJson(res, 400, { error: "Invalid path" }); return; }
+        rel = path.relative(vault, safe).replace(/\\/g, "/");
+      } else if (stemParam) {
+        rel = await findByStem(vault, stemParam);
+      } else {
+        sendJson(res, 400, { error: "stem or path required" });
+        return;
+      }
+      if (!rel) { sendJson(res, 404, { error: "Not found" }); return; }
+      const full = path.join(vault, rel);
+      const platform = process.platform;
+      let cmd: string;
+      let args: string[];
+      if (platform === "darwin") { cmd = "open"; args = [full]; }
+      else if (platform === "win32") { cmd = "cmd"; args = ["/c", "start", "", full]; }
+      else { cmd = "xdg-open"; args = [full]; }
+      try {
+        const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+        child.on("error", (err) => appendLog("graph", `open spawn error: ${err.message}`));
+        child.unref();
+        appendLog("graph", `open ${rel} via ${cmd}`);
+        sendJson(res, 200, { ok: true, path: rel });
+      } catch (err) {
+        appendLog("graph", `open failed: ${err instanceof Error ? err.message : String(err)}`);
+        sendJson(res, 500, { error: "Spawn failed" });
+      }
+      return;
+    }
+
     if (url.pathname === "/api/wiki/search") {
       const vault = getVaultPath();
       if (!vault) { sendJson(res, 503, { error: "No active vault" }); return; }
       const q = (url.searchParams.get("q") ?? "").trim();
       if (!q) { sendJson(res, 400, { error: "q required" }); return; }
-      const results = await searchViaClaudeP(vault, q);
+      appendLog("search", `request: q="${q.slice(0, 80)}" vault=${path.basename(vault)}`);
+      const tStart = Date.now();
+      const results = await searchWiki(vault, q);
+      appendLog("search", `response: results=${results.length} total=${Date.now() - tStart}ms`);
       sendJson(res, 200, { results });
+      return;
+    }
+
+    if (url.pathname === "/api/wiki/graph") {
+      const vault = getVaultPath();
+      if (!vault) { sendJson(res, 503, { error: "No active vault" }); return; }
+      const tStart = Date.now();
+      const data = await buildGraph(vault);
+      appendLog("graph", `nodes=${data.nodes.length} edges=${data.edges.length} ${Date.now() - tStart}ms`);
+      sendJson(res, 200, data);
+      return;
+    }
+
+    if (url.pathname === "/api/live-notes/suggest") {
+      if (req.method !== "POST") { sendText(res, 405, "POST required"); return; }
+      const vault = getVaultPath();
+      if (!vault) { sendJson(res, 503, { error: "No active vault" }); return; }
+      let body = "";
+      try { body = await readBody(req); } catch { sendJson(res, 413, { error: "Payload too large" }); return; }
+      let transcript = "";
+      try {
+        const parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+        transcript = String(parsed.transcript ?? "").trim();
+      } catch { sendJson(res, 400, { error: "Invalid JSON" }); return; }
+      if (!transcript) {
+        appendLog("live-notes", "request: empty transcript — returning empty");
+        sendJson(res, 200, { topics: [], items: [] });
+        return;
+      }
+      appendLog("live-notes", `request: transcript=${transcript.length} chars vault=${path.basename(vault)}`);
+      const tStart = Date.now();
+      const result = await suggestFromTranscript(vault, transcript);
+      appendLog(
+        "live-notes",
+        `response: topics=${result.topics.length} items=${result.items.length} total=${Date.now() - tStart}ms`,
+      );
+      sendJson(res, 200, result);
       return;
     }
 

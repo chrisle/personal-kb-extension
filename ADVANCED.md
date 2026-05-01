@@ -4,12 +4,12 @@
 
 | Variable | Default | Description |
 |---|---|---|
-| `OBSIDIAN_ACTIVE_VAULT` | first folder | Default vault (folder name, not full path) |
 | `OBSIDIAN_AUTO_COMMIT` | `true` | Git-commit every wiki write (vault must be a git repo) |
 | `OBSIDIAN_AUTO_WATCH` | `false` | Watch for file changes and ingest automatically |
 | `OBSIDIAN_AUTO_LINT` | `false` | Periodically fix broken links and orphan pages |
 | `OBSIDIAN_AUTO_LINT_INTERVAL_HOURS` | `6` | How often to run auto-lint (hours, minimum 1) |
-| `OBSIDIAN_INGEST_MODEL` | `claude-sonnet-4-6` | Model used for ingestion, lint, and search |
+| `OBSIDIAN_INGEST_MODEL` | `claude-sonnet-4-6` | Model used for ingestion and lint |
+| `OBSIDIAN_LIVE_MODEL` | `claude-haiku-4-5-20251001` | Model used for live-notes KB suggestions |
 | `OBSIDIAN_DASHBOARD_PORT` | `3737` | Port for the wiki viewer and ingest dashboard |
 
 ## All slash commands

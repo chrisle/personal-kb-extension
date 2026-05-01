@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Markdown, stripFrontmatter } from "@/components/markdown";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type EntryStatus = "queued" | "active" | "done" | "failed" | "skipped";
@@ -16,140 +17,6 @@ interface WikiPage { path: string; content: string; }
 
 const EMPTY_SNAP: Snapshot = { queued: [], active: [], recent: [], concurrency: 0, updatedAt: 0 };
 const LOG_MAX = 500;
-
-// ── Markdown renderer ────────────────────────────────────────────────────────
-
-function stripFrontmatter(md: string): { body: string; title: string } {
-  const m = md.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!m) return { body: md, title: "" };
-  const fm = m[1];
-  const body = m[2];
-  const titleMatch = fm.match(/^title:\s*["']?(.+?)["']?\s*$/m);
-  return { body, title: titleMatch?.[1] ?? "" };
-}
-
-function renderInline(
-  text: string,
-  onWikilink: (stem: string, display: string) => void,
-): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  let s = text;
-  let k = 0;
-  while (s.length > 0) {
-    const wm = s.match(/^\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/);
-    if (wm) {
-      const stem = wm[1].trim(); const display = wm[2]?.trim() || stem;
-      parts.push(<span key={k++} className="wiki-link" onClick={() => onWikilink(stem, display)}>{display}</span>);
-      s = s.slice(wm[0].length); continue;
-    }
-    const bm = s.match(/^\*\*(.+?)\*\*/); if (bm) { parts.push(<strong key={k++}>{bm[1]}</strong>); s = s.slice(bm[0].length); continue; }
-    const im = s.match(/^\*(.+?)\*/); if (im) { parts.push(<em key={k++}>{im[1]}</em>); s = s.slice(im[0].length); continue; }
-    const cm = s.match(/^`(.+?)`/); if (cm) { parts.push(<code key={k++} className="md-code">{cm[1]}</code>); s = s.slice(cm[0].length); continue; }
-    const lm = s.match(/^\[([^\]]+)\]\(([^)]+)\)/); if (lm) { parts.push(<a key={k++} href={lm[2]} target="_blank" rel="noreferrer">{lm[1]}</a>); s = s.slice(lm[0].length); continue; }
-    const next = s.search(/\[\[|\*\*|\*(?!\*)|`|\[/);
-    if (next === -1) { parts.push(s); s = ""; }
-    else if (next === 0) { parts.push(s[0]); s = s.slice(1); }
-    else { parts.push(s.slice(0, next)); s = s.slice(next); }
-  }
-  return parts.length === 1 ? parts[0] : <>{parts}</>;
-}
-
-function Markdown({ content, onWikilink }: { content: string; onWikilink: (stem: string, display: string) => void }) {
-  const lines = content.split("\n");
-  const elements: React.ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Fenced code block
-    if (line.startsWith("```")) {
-      const lang = line.slice(3).trim();
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
-      elements.push(<pre key={i} className="md-pre"><code className={lang ? `lang-${lang}` : ""}>{codeLines.join("\n")}</code></pre>);
-      i++; continue;
-    }
-
-    // Headings
-    const hm = line.match(/^(#{1,4})\s+(.*)/);
-    if (hm) {
-      const lvl = hm[1].length;
-      const Tag = `h${lvl}` as "h1" | "h2" | "h3" | "h4";
-      elements.push(<Tag key={i} className="md-heading">{renderInline(hm[2], onWikilink)}</Tag>);
-      i++; continue;
-    }
-
-    // HR
-    if (line.match(/^---+$/) || line.match(/^\*\*\*+$/) || line.match(/^___+$/)) {
-      elements.push(<hr key={i} className="md-hr" />); i++; continue;
-    }
-
-    // Blockquote
-    if (line.startsWith("> ")) {
-      const qLines: string[] = [];
-      while (i < lines.length && lines[i].startsWith("> ")) { qLines.push(lines[i].slice(2)); i++; }
-      elements.push(<blockquote key={i} className="md-blockquote">{qLines.map((l, j) => <p key={j}>{renderInline(l, onWikilink)}</p>)}</blockquote>);
-      continue;
-    }
-
-    // Unordered list
-    if (line.match(/^[-*+]\s+/)) {
-      const items: string[] = [];
-      while (i < lines.length && lines[i].match(/^[-*+]\s+/)) { items.push(lines[i].replace(/^[-*+]\s+/, "")); i++; }
-      elements.push(<ul key={i} className="md-ul">{items.map((item, j) => <li key={j}>{renderInline(item, onWikilink)}</li>)}</ul>);
-      continue;
-    }
-
-    // Ordered list
-    if (line.match(/^\d+\.\s+/)) {
-      const items: string[] = [];
-      while (i < lines.length && lines[i].match(/^\d+\.\s+/)) { items.push(lines[i].replace(/^\d+\.\s+/, "")); i++; }
-      elements.push(<ol key={i} className="md-ol">{items.map((item, j) => <li key={j}>{renderInline(item, onWikilink)}</li>)}</ol>);
-      continue;
-    }
-
-    // Table (basic)
-    if (line.includes("|") && lines[i + 1]?.match(/^[\s|:-]+$/)) {
-      const tableLines: string[] = [];
-      while (i < lines.length && lines[i].includes("|")) { tableLines.push(lines[i]); i++; }
-      const [headerRow, , ...bodyRows] = tableLines;
-      const headers = headerRow.split("|").filter((c) => c.trim() !== "").map((c) => c.trim());
-      const rows = bodyRows.map((r) => r.split("|").filter((c) => c.trim() !== "").map((c) => c.trim()));
-      elements.push(
-        <div key={i} className="md-table-wrap">
-          <table className="md-table">
-            <thead><tr>{headers.map((h, j) => <th key={j}>{renderInline(h, onWikilink)}</th>)}</tr></thead>
-            <tbody>{rows.map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{renderInline(cell, onWikilink)}</td>)}</tr>)}</tbody>
-          </table>
-        </div>
-      );
-      continue;
-    }
-
-    // Empty line
-    if (line.trim() === "") { i++; continue; }
-
-    // Paragraph
-    const paraLines: string[] = [];
-    while (
-      i < lines.length &&
-      lines[i].trim() !== "" &&
-      !lines[i].match(/^#{1,4}\s/) &&
-      !lines[i].startsWith("```") &&
-      !lines[i].match(/^[-*+]\s/) &&
-      !lines[i].match(/^\d+\.\s/) &&
-      !lines[i].startsWith("> ") &&
-      !lines[i].match(/^---+$/)
-    ) { paraLines.push(lines[i]); i++; }
-    if (paraLines.length > 0) {
-      elements.push(<p key={i} className="md-para">{renderInline(paraLines.join(" "), onWikilink)}</p>);
-    }
-  }
-
-  return <div className="md-body">{elements}</div>;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -174,11 +41,35 @@ function logLineClass(line: string): string {
   return "";
 }
 
+// Reserved URL paths that are NOT wiki pages
+const RESERVED_PATHS = new Set(["live-notes", "graph"]);
+
+// "wiki/concepts/foo.md" → "/concepts/foo"
+function pathToUrl(rel: string): string {
+  if (!rel || rel === "wiki/index.md") return "/";
+  const stripped = rel.replace(/^wiki\//, "").replace(/\.md$/, "");
+  if (!stripped) return "/";
+  return "/" + stripped.split("/").map(encodeURIComponent).join("/");
+}
+
+// Read current URL → wiki page path, or null for home
+function urlToWikiPath(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const queryPath = params.get("path");
+  if (queryPath) return queryPath;
+  let pathname: string;
+  try { pathname = decodeURIComponent(window.location.pathname); } catch { return null; }
+  const trimmed = pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!trimmed) return null;
+  if (RESERVED_PATHS.has(trimmed)) return null;
+  return trimmed.endsWith(".md") ? `wiki/${trimmed}` : `wiki/${trimmed}.md`;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Page() {
   const [panel, setPanel] = useState<"none" | "queue" | "logs">("none");
-  const [connected, setConnected] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAP);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -202,7 +93,9 @@ export default function Page() {
   const autoScrollRef = useRef(true);
 
   // Load a wiki page by path
-  const loadPage = useCallback(async (path: string, pushHistory = true) => {
+  const loadPage = useCallback(async (path: string, opts?: { pushHistory?: boolean; updateUrl?: boolean }) => {
+    const pushHistory = opts?.pushHistory ?? true;
+    const updateUrl = opts?.updateUrl ?? true;
     setWikiLoading(true);
     setWikiError("");
     setSearchResults(null);
@@ -218,6 +111,11 @@ export default function Page() {
       setWikiPage(data);
       setWikiTitle(title || path.split("/").pop()?.replace(".md", "") || path);
       setWikiBody(body);
+      if (updateUrl && typeof window !== "undefined") {
+        const newUrl = pathToUrl(data.path);
+        const cur = window.location.pathname + window.location.search;
+        if (cur !== newUrl) history.pushState(null, "", newUrl);
+      }
     } catch {
       setWikiError("Network error loading page");
     } finally {
@@ -239,6 +137,11 @@ export default function Page() {
       setWikiPage(data);
       setWikiTitle(title || stem);
       setWikiBody(body);
+      if (typeof window !== "undefined") {
+        const newUrl = pathToUrl(data.path);
+        const cur = window.location.pathname + window.location.search;
+        if (cur !== newUrl) history.pushState(null, "", newUrl);
+      }
     } catch {
       setWikiError("Network error");
     } finally {
@@ -254,14 +157,17 @@ export default function Page() {
       setWikiTitle("");
       setWikiBody("");
       setSearchResults(null);
+      if (typeof window !== "undefined" && window.location.pathname !== "/") {
+        history.pushState(null, "", "/");
+      }
       return;
     }
     const prev = wikiHistory[wikiHistory.length - 1];
     setWikiHistory((h) => h.slice(0, -1));
-    void loadPage(prev.path, false);
+    void loadPage(prev.path, { pushHistory: false });
   }, [wikiHistory, loadPage]);
 
-  // Go to home (wiki index)
+  // Go to home (centered search)
   const goHome = useCallback(() => {
     setWikiPage(null);
     setWikiTitle("");
@@ -270,26 +176,8 @@ export default function Page() {
     setSearchResults(null);
     setSearchQuery("");
     setWikiError("");
-    void loadIndex();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadIndex = useCallback(async () => {
-    setWikiLoading(true);
-    setWikiError("");
-    try {
-      const r = await fetch("/api/wiki");
-      if (!r.ok) { setWikiError("No wiki found — use /kb to set one up in Claude."); return; }
-      const data = await r.json() as WikiPage;
-      const { body, title } = stripFrontmatter(data.content);
-      setWikiPage(data);
-      setWikiTitle(title || "Index");
-      setWikiBody(body);
-      setWikiHistory([]);
-    } catch {
-      setWikiError("Could not connect to server");
-    } finally {
-      setWikiLoading(false);
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      history.pushState(null, "", "/");
     }
   }, []);
 
@@ -309,8 +197,31 @@ export default function Page() {
     }
   }, []);
 
-  // Load wiki index on mount
-  useEffect(() => { void loadIndex(); }, [loadIndex]);
+  // On mount: read URL → wiki path. Listen for popstate (back/forward).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const initial = urlToWikiPath();
+    if (initial) void loadPage(initial, { pushHistory: false, updateUrl: false });
+
+    const onPop = () => {
+      const target = urlToWikiPath();
+      if (!target) {
+        setWikiPage(null);
+        setWikiTitle("");
+        setWikiBody("");
+        setWikiHistory([]);
+        setSearchResults(null);
+        setSearchQuery("");
+        setWikiError("");
+        return;
+      }
+      setWikiHistory([]);
+      void loadPage(target, { pushHistory: false, updateUrl: false });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Queue SSE
   useEffect(() => {
@@ -319,10 +230,9 @@ export default function Page() {
     const connect = () => {
       if (cancelled) return;
       source = new EventSource("/api/events");
-      source.onopen = () => setConnected(true);
       source.onmessage = (ev) => { try { setSnapshot(JSON.parse(ev.data as string) as Snapshot); } catch { /* ignore */ } };
       source.onerror = () => {
-        setConnected(false); source?.close();
+        source?.close();
         if (cancelled) return;
         reconnectTimer.current = setTimeout(connect, 2000);
       };
@@ -364,6 +274,12 @@ export default function Page() {
           Personal Knowledge Base
         </button>
         <nav className="header-nav">
+          <a className="nav-btn" href="/graph">
+            Graph
+          </a>
+          <a className="nav-btn" href="/live-notes">
+            Live Notes
+          </a>
           <button
             className={`nav-btn ${panel === "queue" ? "active" : ""}`}
             onClick={() => togglePanel("queue")}
@@ -379,75 +295,100 @@ export default function Page() {
           >
             Logs
           </button>
-          <span className={`status-pill ${connected ? "live" : ""}`}>
-            <span className="dot" />
-            {connected ? "live" : "reconnecting…"}
-          </span>
         </nav>
       </header>
 
-      {/* Wiki — always the main view */}
-      <main className="wiki-main">
-        <div className="wiki-search-bar">
-          <form onSubmit={(e) => { e.preventDefault(); void runSearch(searchQuery); }}>
-            <input
-              className="wiki-search-input"
-              type="text"
-              placeholder="Search the knowledge base…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <button type="submit" className="wiki-search-btn" disabled={searchLoading}>
-              {searchLoading ? "Searching…" : "Search"}
-            </button>
-            {(searchResults !== null || searchQuery) && (
-              <button type="button" className="wiki-search-clear" onClick={() => { setSearchResults(null); setSearchQuery(""); }}>✕</button>
-            )}
-          </form>
-        </div>
-
-        {(wikiHistory.length > 0 || (wikiPage && wikiPage.path !== "wiki/index.md")) && (
-          <div className="wiki-breadcrumb">
-            <button className="crumb-btn" onClick={goHome}>Home</button>
-            {wikiHistory.map((h, i) => (
-              <span key={i}>
-                <span className="crumb-sep"> › </span>
-                <button className="crumb-btn" onClick={() => { setWikiHistory((hist) => hist.slice(0, i)); void loadPage(h.path, false); }}>{h.title}</button>
-              </span>
-            ))}
-            {wikiPage && wikiPage.path !== "wiki/index.md" && (
-              <><span className="crumb-sep"> › </span><span className="crumb-current">{wikiTitle}</span></>
-            )}
-          </div>
-        )}
-
-        {searchResults !== null && (
-          <div className="wiki-search-results">
-            <div className="search-results-header">
-              {searchResults.length === 0 ? "No results found." : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
-            </div>
-            {searchResults.map((r, i) => (
-              <div key={i} className="search-result" onClick={() => void loadPage(r.path)}>
-                <div className="search-result-title">{r.title}</div>
-                <div className="search-result-path">{r.path}</div>
-                {r.snippet && <div className="search-result-snippet">{r.snippet}</div>}
+      {(() => {
+        const isHome = !wikiPage && !wikiLoading && !wikiError && searchResults === null;
+        if (isHome) {
+          return (
+            <main className="home-main">
+              <div className="home-hero">
+                <h1 className="home-title">Personal Knowledge Base</h1>
+                <form
+                  className="home-search-form"
+                  onSubmit={(e) => { e.preventDefault(); void runSearch(searchQuery); }}
+                >
+                  <input
+                    autoFocus
+                    className="home-search-input"
+                    type="text"
+                    placeholder="Search the knowledge base…"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  <button type="submit" className="home-search-btn" disabled={searchLoading}>
+                    {searchLoading ? "Searching…" : "Search"}
+                  </button>
+                </form>
               </div>
-            ))}
-          </div>
-        )}
+            </main>
+          );
+        }
+        return (
+          <main className="wiki-main">
+            <div className="wiki-search-bar">
+              <form onSubmit={(e) => { e.preventDefault(); void runSearch(searchQuery); }}>
+                <input
+                  className="wiki-search-input"
+                  type="text"
+                  placeholder="Search the knowledge base…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <button type="submit" className="wiki-search-btn" disabled={searchLoading}>
+                  {searchLoading ? "Searching…" : "Search"}
+                </button>
+                {(searchResults !== null || searchQuery) && (
+                  <button type="button" className="wiki-search-clear" onClick={() => { setSearchResults(null); setSearchQuery(""); }}>✕</button>
+                )}
+              </form>
+            </div>
 
-        {wikiError && <div className="wiki-error">{wikiError}</div>}
-        {wikiLoading && <div className="wiki-loading">Loading…</div>}
-        {!wikiLoading && !wikiError && searchResults === null && wikiBody && (
-          <div className="wiki-content">
-            {wikiTitle && <h1 className="wiki-page-title">{wikiTitle}</h1>}
-            <Markdown content={wikiBody} onWikilink={onWikilink} />
-            {wikiHistory.length > 0 && (
-              <button className="wiki-back-btn" onClick={goBack}>← Back</button>
+            {(wikiHistory.length > 0 || (wikiPage && wikiPage.path !== "wiki/index.md")) && (
+              <div className="wiki-breadcrumb">
+                <button className="crumb-btn" onClick={goHome}>Home</button>
+                {wikiHistory.map((h, i) => (
+                  <span key={i}>
+                    <span className="crumb-sep"> › </span>
+                    <button className="crumb-btn" onClick={() => { setWikiHistory((hist) => hist.slice(0, i)); void loadPage(h.path, { pushHistory: false }); }}>{h.title}</button>
+                  </span>
+                ))}
+                {wikiPage && wikiPage.path !== "wiki/index.md" && (
+                  <><span className="crumb-sep"> › </span><span className="crumb-current">{wikiTitle}</span></>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </main>
+
+            {searchResults !== null && (
+              <div className="wiki-search-results">
+                <div className="search-results-header">
+                  {searchResults.length === 0 ? "No results found." : `${searchResults.length} result${searchResults.length === 1 ? "" : "s"}`}
+                </div>
+                {searchResults.map((r, i) => (
+                  <div key={i} className="search-result" onClick={() => void loadPage(r.path)}>
+                    <div className="search-result-title">{r.title}</div>
+                    <div className="search-result-path">{r.path}</div>
+                    {r.snippet && <div className="search-result-snippet">{r.snippet}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {wikiError && <div className="wiki-error">{wikiError}</div>}
+            {wikiLoading && <div className="wiki-loading">Loading…</div>}
+            {!wikiLoading && !wikiError && searchResults === null && wikiBody && (
+              <div className="wiki-content">
+                {wikiTitle && <h1 className="wiki-page-title">{wikiTitle}</h1>}
+                <Markdown content={wikiBody} onWikilink={onWikilink} />
+                {wikiHistory.length > 0 && (
+                  <button className="wiki-back-btn" onClick={goBack}>← Back</button>
+                )}
+              </div>
+            )}
+          </main>
+        );
+      })()}
 
       {/* Drawers — slide in over the wiki */}
       {panel !== "none" && <div className="drawer-backdrop" onClick={closePanel} />}

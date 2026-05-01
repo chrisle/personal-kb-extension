@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-INSTALLED="$HOME/Library/Application Support/Claude/Claude Extensions/local.unpacked.christopher-le.obsidian-claude-accenture/server"
+INSTALLED="$HOME/Library/Application Support/Claude/Claude Extensions/local.unpacked.christopher-le.personal-knowledge-base-accenture/server"
 SRC="$ROOT/server"
 DASH="$ROOT/dashboard"
 

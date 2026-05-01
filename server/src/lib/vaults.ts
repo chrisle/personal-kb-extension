@@ -19,7 +19,6 @@ export function loadConfigFromArgv(argv: string[]): VaultConfig {
     .map((p) => path.resolve(p))
     .filter((p) => p.length > 0);
 
-  const activeName = (process.env.OBSIDIAN_ACTIVE_VAULT ?? "").trim();
   const autoCommitRaw = process.env.OBSIDIAN_AUTO_COMMIT ?? "true";
   const autoCommit = !["0", "false", "no", "off"].includes(autoCommitRaw.toLowerCase());
   const autoWatchRaw = process.env.OBSIDIAN_AUTO_WATCH ?? "false";
@@ -28,13 +27,7 @@ export function loadConfigFromArgv(argv: string[]): VaultConfig {
   const autoLint = ["1", "true", "yes", "on"].includes(autoLintRaw.toLowerCase());
   const autoLintIntervalHours = Math.max(1, Number(process.env.OBSIDIAN_AUTO_LINT_INTERVAL_HOURS ?? "6") || 6);
 
-  let active: string | null = null;
-  if (activeName) {
-    active = vaults.find((v) => path.basename(v) === activeName) ?? null;
-  }
-  if (!active && vaults.length > 0) {
-    active = vaults[0];
-  }
+  const active: string | null = vaults.length > 0 ? vaults[0] : null;
 
   return { vaults, active, autoCommit, autoWatch, autoLint, autoLintIntervalHours };
 }
