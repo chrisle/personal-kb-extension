@@ -96,15 +96,15 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ steps.version.outputs.value }}"
-          git push origin "v${{ steps.version.outputs.value }}"
+          git tag -f "v${{ steps.version.outputs.value }}"
+          git push --force origin "v${{ steps.version.outputs.value }}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.value }}
           name: v${{ steps.version.outputs.value }}
-          generate_release_notes: true
+          overwrite: true
           files: |
             personal-knowledge-base-${{ steps.version.outputs.value }}.mcpb
             source-${{ steps.version.outputs.value }}.zip

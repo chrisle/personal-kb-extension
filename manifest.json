@@ -2,7 +2,7 @@
     "manifest_version": "0.2",
     "name": "personal-knowledge-base",
     "display_name": "Personal Knowledge Base",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "description": "Build and maintain a personal knowledge base from inside Claude. Drop files into a folder; Claude organizes them into searchable, linked notes. Compatible with Obsidian.",
     "long_description": "Turn one or more folders into living knowledge bases that Claude builds with you in chat. Drop in PDFs, decks, transcripts, screenshots, or notes — Claude reads them, extracts the key ideas, and files them as structured wiki pages with cross-links. Save conversations as notes, ask the wiki questions in plain English, and let Claude run autonomous research loops that file their own findings.\n\nEach knowledge folder is also a valid Obsidian vault, so you can open it in Obsidian for visual navigation, but Obsidian is not required. Optional features: auto-organize new files the moment you drop them in, and auto-snapshot every change to git so you can roll back.\n\nBased on the LLM Wiki pattern by Andrej Karpathy.",
     "author": {
