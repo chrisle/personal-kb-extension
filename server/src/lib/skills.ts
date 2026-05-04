@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const EXTENSION_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SKILLS_SRC = path.join(EXTENSION_ROOT, "assets", "skills");
-const MARKER = ".obsidian-claude-accenture";
+const MARKER = ".personal-knowledge-base";
 
 function skillNames(): string[] {
   try {

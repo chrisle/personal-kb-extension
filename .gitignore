@@ -20,3 +20,5 @@ server/dist/
 # Built bundles (distributed separately, not via git)
 *.mcpb
 *.dxt
+
+deploy.sh

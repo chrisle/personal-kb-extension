@@ -36,13 +36,13 @@ const REFRESH_MIN_INTERVAL_MS = 1200; // hard floor between requests
 const TRANSCRIPT_WINDOW_CHARS = 1500; // chunk sent to backend
 const FINAL_RING_MAX = 4000;          // keep this many chars of finalized transcript on screen
 
-// Map "wiki/concepts/foo.md" → "/concepts/foo" so the Open-full-page link
+// Map "wiki/concepts/foo.md" → "/wiki/concepts/foo" so the Open-full-page link
 // lands on the wiki page route.
 function pathToUrl(rel: string): string {
-  if (!rel || rel === "wiki/index.md") return "/";
+  if (!rel || rel === "wiki/index.md") return "/wiki";
   const stripped = rel.replace(/^wiki\//, "").replace(/\.md$/, "");
-  if (!stripped) return "/";
-  return "/" + stripped.split("/").map(encodeURIComponent).join("/");
+  if (!stripped) return "/wiki";
+  return "/wiki/" + stripped.split("/").map(encodeURIComponent).join("/");
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -555,7 +555,7 @@ export default function LiveNotesPage() {
   return (
     <div className="ln-app">
       <header className="ln-header">
-        <a href="/" className="ln-back">← Wiki</a>
+        <a href="/wiki" className="ln-back">← Wiki</a>
         <h1 className="ln-title">Live Notes</h1>
         <div className="ln-header-spacer" />
         <div className="ln-controls">

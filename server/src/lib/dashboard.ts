@@ -111,6 +111,23 @@ function safeWikiPath(vault: string, requested: string): string | null {
   return full;
 }
 
+// Anywhere-in-vault path validation used by /api/wiki/open. Wikilinks can point
+// to attachments (PDFs in .raw/, images, etc.), not just wiki/*.md, so this
+// only enforces the escape guard, not the wiki/.md restriction.
+const VAULT_OPEN_IGNORE = new Set([".git", "node_modules"]);
+
+function safeVaultPath(vault: string, requested: string): string | null {
+  if (!requested) return null;
+  const decoded = decodeURIComponent(requested);
+  const full = path.resolve(vault, decoded);
+  const root = path.resolve(vault);
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  const rel = path.relative(root, full);
+  const top = rel.split(path.sep)[0];
+  if (VAULT_OPEN_IGNORE.has(top)) return null;
+  return full;
+}
+
 async function findByStem(vault: string, stem: string): Promise<string | null> {
   // Try direct path first (handles path-style wikilinks like "index/clearance")
   const directPath = path.join(vault, "wiki", stem.replace(/\//g, path.sep) + ".md");
@@ -125,6 +142,38 @@ async function findByStem(vault: string, stem: string): Promise<string | null> {
   const match = files.find((f) => path.basename(f, ".md") === stem);
   if (!match) return null;
   return path.relative(vault, match).replace(/\\/g, "/");
+}
+
+// Whole-vault stem/filename resolver for /api/wiki/open. Wiki pages can link
+// to any file in the vault — attachments, PDFs in .raw/, images — not just
+// wiki/*.md, so try the md-page resolver first (cheap, hits the common case)
+// and fall back to a vault-wide scan that matches by stem or full filename.
+async function collectAllVaultFiles(dir: string, vault: string, out: string[]): Promise<void> {
+  let entries: fs.Dirent[];
+  try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const rel = path.relative(vault, full);
+      const top = rel.split(path.sep)[0];
+      if (VAULT_OPEN_IGNORE.has(top) || e.name === ".DS_Store") continue;
+      await collectAllVaultFiles(full, vault, out);
+    } else if (e.name !== ".DS_Store") {
+      out.push(full);
+    }
+  }
+}
+
+async function findFileInVault(vault: string, target: string): Promise<string | null> {
+  const md = await findByStem(vault, target);
+  if (md) return md;
+  const files: string[] = [];
+  await collectAllVaultFiles(vault, vault, files);
+  const byFilename = files.find((f) => path.basename(f) === target);
+  if (byFilename) return path.relative(vault, byFilename).replace(/\\/g, "/");
+  const byStem = files.find((f) => path.basename(f, path.extname(f)) === target);
+  if (byStem) return path.relative(vault, byStem).replace(/\\/g, "/");
+  return null;
 }
 
 interface SearchResult {
@@ -482,11 +531,11 @@ export function startDashboard(cfg: VaultConfig): void {
       const stemParam = url.searchParams.get("stem");
       let rel: string | null = null;
       if (pathParam) {
-        const safe = safeWikiPath(vault, pathParam);
+        const safe = safeVaultPath(vault, pathParam);
         if (!safe) { sendJson(res, 400, { error: "Invalid path" }); return; }
         rel = path.relative(vault, safe).replace(/\\/g, "/");
       } else if (stemParam) {
-        rel = await findByStem(vault, stemParam);
+        rel = await findFileInVault(vault, stemParam);
       } else {
         sendJson(res, 400, { error: "stem or path required" });
         return;
@@ -580,7 +629,22 @@ export function startDashboard(cfg: VaultConfig): void {
   });
 
   server.on("error", (err) => log("dashboard", `error: ${err.message}`));
-  server.listen(port, "127.0.0.1", () => log("dashboard", `listening on http://127.0.0.1:${port}`));
+  server.listen(port, "127.0.0.1", () => {
+    log("dashboard", `listening on http://127.0.0.1:${port}`);
+    if (cfg.openBrowser) {
+      const url = `http://127.0.0.1:${port}`;
+      const platform = process.platform;
+      let cmd: string;
+      let args: string[];
+      if (platform === "darwin") { cmd = "open"; args = [url]; }
+      else if (platform === "win32") { cmd = "cmd"; args = ["/c", "start", "", url]; }
+      else { cmd = "xdg-open"; args = [url]; }
+      const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+      child.on("error", (err) => log("dashboard", `open browser error: ${err.message}`));
+      child.unref();
+      log("dashboard", `opening browser at ${url}`);
+    }
+  });
 }
 
 export async function stopDashboard(): Promise<void> {
@@ -670,8 +734,12 @@ async function serveStatic(root: string, pathname: string, method: string, res: 
     } catch { continue; }
   }
 
+  // Choose SPA fallback: /wiki/* paths fall back to the wiki shell.
+  // Next.js exports /wiki as wiki.html (trailingSlash: false), not wiki/index.html.
+  const isWikiPath = decoded.startsWith("/wiki/") || decoded === "/wiki";
+  const fallbackFile = isWikiPath ? "wiki.html" : "index.html";
   try {
-    const fallback = path.join(root, "index.html");
+    const fallback = path.join(root, fallbackFile);
     const stat = await fsp.stat(fallback);
     res.writeHead(200, { "content-type": MIME[".html"]!, "content-length": stat.size, "cache-control": "no-store" });
     fs.createReadStream(fallback).pipe(res);

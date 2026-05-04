@@ -11,6 +11,7 @@ export interface VaultConfig {
   autoWatch: boolean;
   autoLint: boolean;
   autoLintIntervalHours: number;
+  openBrowser: boolean;
 }
 
 export function loadConfigFromArgv(argv: string[]): VaultConfig {
@@ -26,10 +27,12 @@ export function loadConfigFromArgv(argv: string[]): VaultConfig {
   const autoLintRaw = process.env.OBSIDIAN_AUTO_LINT ?? "false";
   const autoLint = ["1", "true", "yes", "on"].includes(autoLintRaw.toLowerCase());
   const autoLintIntervalHours = Math.max(1, Number(process.env.OBSIDIAN_AUTO_LINT_INTERVAL_HOURS ?? "6") || 6);
+  const openBrowserRaw = process.env.OBSIDIAN_OPEN_BROWSER ?? "false";
+  const openBrowser = ["1", "true", "yes", "on"].includes(openBrowserRaw.toLowerCase());
 
   const active: string | null = vaults.length > 0 ? vaults[0] : null;
 
-  return { vaults, active, autoCommit, autoWatch, autoLint, autoLintIntervalHours };
+  return { vaults, active, autoCommit, autoWatch, autoLint, autoLintIntervalHours, openBrowser };
 }
 
 let runtimeActive: string | null = null;

@@ -7,7 +7,7 @@ const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "Wiki ingest queue",
-  description: "Live status of the obsidian-claude-accenture ingest pipeline.",
+  description: "Live status of the personal-knowledge-base ingest pipeline.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

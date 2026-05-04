@@ -26,7 +26,7 @@ Plain markdown files on your disk. No cloud sync. No special formats. Optionally
 
 ## Install
 
-1. Download `obsidian-claude-accenture.mcpb` from the internal share link.
+1. Download `personal-knowledge-base.mcpb` from the [latest release](https://github.com/chrisle/personal-kb-extension/releases/latest).
 2. Open Claude Desktop → **Settings → Extensions**.
 3. Drag the `.mcpb` file into the Extensions window.
 4. Click the extension → add one or more folders under **Knowledge folders**.

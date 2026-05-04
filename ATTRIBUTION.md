@@ -48,5 +48,4 @@ The following Obsidian community plugins ship inside `assets/obsidian/plugins/` 
 ## This DXT
 
 **License:** MIT (see [LICENSE](LICENSE))
-**Author:** Christopher Le (Accenture)
-**Purpose:** Internal Accenture distribution channel for the LLM Wiki pattern in Claude Desktop.
+**Author:** Christopher Le

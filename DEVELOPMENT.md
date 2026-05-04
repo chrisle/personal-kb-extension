@@ -16,18 +16,18 @@ cd server && npm prune --omit=dev && cd ..
 mkdir -p /tmp/mcpb-tools && (cd /tmp/mcpb-tools && npm init -y >/dev/null && npm install @anthropic-ai/mcpb)
 
 # 5. Pack
-/tmp/mcpb-tools/node_modules/.bin/mcpb pack . obsidian-claude-accenture.mcpb
+/tmp/mcpb-tools/node_modules/.bin/mcpb pack . personal-knowledge-base.mcpb
 
 # 6. Restore server dev deps for next build
 cd server && npm install && cd ..
 ```
 
-This produces `obsidian-claude-accenture.mcpb` at the project root (~4 MB). Drag it into Claude Desktop → Settings → Extensions to install.
+This produces `personal-knowledge-base.mcpb` at the project root (~4 MB). Drag it into Claude Desktop → Settings → Extensions to install.
 
 To inspect a built bundle:
 
 ```sh
-/tmp/mcpb-tools/node_modules/.bin/mcpb info obsidian-claude-accenture.mcpb
+/tmp/mcpb-tools/node_modules/.bin/mcpb info personal-knowledge-base.mcpb
 ```
 
 ## Project structure

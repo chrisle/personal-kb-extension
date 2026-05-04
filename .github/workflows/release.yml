@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Read version
+        id: version
+        run: echo "value=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build server
+        run: cd server && npm ci && npm run build
+
+      - name: Build dashboard
+        run: cd dashboard && npm ci && npm run build
+
+      - name: Create .mcpb package
+        run: |
+          cat > /tmp/make_mcpb.py << 'EOF'
+          import os, zipfile, fnmatch
+
+          version = os.environ['VERSION']
+
+          ignore_patterns = []
+          with open('.mcpbignore') as f:
+              for line in f:
+                  line = line.strip()
+                  if line and not line.startswith('#'):
+                      ignore_patterns.append(line)
+
+          ALWAYS_PRUNE = {'node_modules', '.git', '__pycache__', '.DS_Store'}
+
+          def should_ignore(rel_path):
+              parts = rel_path.replace('\\', '/').split('/')
+              if any(p in ALWAYS_PRUNE for p in parts):
+                  return True
+              for pattern in ignore_patterns:
+                  clean = pattern.rstrip('/')
+                  if rel_path == clean or rel_path.startswith(clean + '/'):
+                      return True
+                  if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(os.path.basename(rel_path), pattern):
+                      return True
+              return False
+
+          out_name = f'personal-knowledge-base-{version}.mcpb'
+          count = 0
+          with zipfile.ZipFile(out_name, 'w', zipfile.ZIP_DEFLATED) as zf:
+              for root, dirs, files in os.walk('.'):
+                  dirs[:] = sorted(d for d in dirs if d not in ALWAYS_PRUNE)
+                  rel_root = os.path.relpath(root, '.').replace('\\', '/')
+                  if rel_root == '.':
+                      rel_root = ''
+                  for fname in sorted(files):
+                      rel_path = (rel_root + '/' + fname).lstrip('/')
+                      if not should_ignore(rel_path):
+                          zf.write(os.path.join(root, fname), rel_path)
+                          count += 1
+
+          print(f'Created {out_name} ({count} files)')
+          EOF
+          python3 /tmp/make_mcpb.py
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+
+      - name: Create source archive
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          git archive HEAD \
+            --format=zip \
+            --prefix="personal-knowledge-base-${VERSION}/" \
+            -o "source-${VERSION}.zip"
+
+      - name: Tag release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.value }}"
+          git push origin "v${{ steps.version.outputs.value }}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            personal-knowledge-base-${{ steps.version.outputs.value }}.mcpb
+            source-${{ steps.version.outputs.value }}.zip

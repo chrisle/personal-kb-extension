@@ -39,7 +39,7 @@ export const kbTools: Tool[] = [
   {
     name: "kb_search",
     description:
-      "Search the knowledge base for pages matching a query. Returns results formatted like a web search — title, path, and a one-line snippet — ranked by relevance.",
+      "Search the knowledge base for pages matching a query. Returns results formatted like a web search — title, wikilink, path, and a one-line snippet — ranked by relevance. When you use these results to answer a question, cite each fact back to its source page (use the `[[stem]]` wikilink shown in the result, or the full path).",
     inputSchema: {
       type: "object",
       properties: {
@@ -213,10 +213,34 @@ async function search(cfg: VaultConfig, args: Record<string, unknown>) {
 
   const lines = top.map((r, i) => {
     const rel = path.relative(vault, r.file).replace(/\\/g, "/");
-    return `${i + 1}. **${r.title}**\n   ${rel}\n   ${r.snippet || "(no snippet)"}`;
+    const stem = path.basename(r.file, ".md");
+    return `${i + 1}. **${r.title}** [[${stem}]]\n   ${rel}\n   ${r.snippet || "(no snippet)"}`;
   });
 
-  return textResult(`Search results for "${q}" (${top.length}):\n\n${lines.join("\n\n")}`);
+  return textResult(
+    `Search results for "${q}" (${top.length}):\n\n${lines.join("\n\n")}\n\n` +
+    `When you use any of the above to answer, cite the source page using its [[stem]] wikilink or full path.`,
+  );
+}
+
+// Vault subtrees we never treat as wiki link targets — git internals, node deps,
+// macOS metadata. Anything else (PDFs in .raw/, images, attachments) is fair game.
+const VAULT_LINK_IGNORE = new Set([".git", "node_modules", ".vault-meta"]);
+
+async function collectAll(dir: string, vault: string, out: string[]): Promise<void> {
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const rel = path.relative(vault, full);
+      const top = rel.split(path.sep)[0];
+      if (VAULT_LINK_IGNORE.has(top) || e.name === ".DS_Store") continue;
+      await collectAll(full, vault, out);
+    } else {
+      if (e.name === ".DS_Store") continue;
+      out.push(full);
+    }
+  }
 }
 
 async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
@@ -225,18 +249,32 @@ async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
   const wikiDir = path.join(kbDir(vault), "wiki");
   if (!fs.existsSync(wikiDir)) throw new Error("No wiki/ folder yet — run vault_scaffold first");
 
+  // Pages = markdown files under wiki/. These are what we compute orphans for.
   const pages = new Map<string, { outbound: Set<string>; inbound: Set<string> }>();
-
-  const allFiles: string[] = [];
-  await collect(wikiDir, allFiles);
-  for (const f of allFiles) {
+  const wikiFiles: string[] = [];
+  await collect(wikiDir, wikiFiles);
+  for (const f of wikiFiles) {
     if (!/\.md$/i.test(f)) continue;
     const stem = path.basename(f, path.extname(f));
     pages.set(stem, { outbound: new Set(), inbound: new Set() });
   }
 
+  // Valid link targets = everything else in the vault (attachments, sources,
+  // PDFs, images). Wikilinks can address them by stem ([[diagram]] → diagram.png)
+  // or by full filename ([[diagram.png]]).
+  const validStems = new Set<string>(pages.keys());
+  const validFilenames = new Set<string>();
+  const vaultFiles: string[] = [];
+  await collectAll(vault, vault, vaultFiles);
+  for (const f of vaultFiles) {
+    const base = path.basename(f);
+    const stem = path.basename(f, path.extname(f));
+    validStems.add(stem);
+    validFilenames.add(base);
+  }
+
   const linkRe = /\[\[([^\]|#]+)/g;
-  for (const f of allFiles) {
+  for (const f of wikiFiles) {
     if (!/\.md$/i.test(f)) continue;
     const stem = path.basename(f, path.extname(f));
     const body = await fsp.readFile(f, "utf8");
@@ -256,7 +294,8 @@ async function lint(cfg: VaultConfig, args: Record<string, unknown>) {
   for (const [name, node] of pages) {
     if (node.inbound.size === 0 && name !== "index" && name !== "hot") orphans.push(name);
     for (const t of node.outbound) {
-      if (!pages.has(t)) broken.push({ from: name, to: t });
+      if (validStems.has(t) || validFilenames.has(t)) continue;
+      broken.push({ from: name, to: t });
     }
   }
 

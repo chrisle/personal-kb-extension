@@ -1,14 +1,20 @@
 {
     "manifest_version": "0.2",
-    "name": "personal-knowledge-base-accenture",
-    "display_name": "Personal Knowledge Base (Accenture)",
-    "version": "0.4.0",
+    "name": "personal-knowledge-base",
+    "display_name": "Personal Knowledge Base",
+    "version": "0.4.1",
     "description": "Build and maintain a personal knowledge base from inside Claude. Drop files into a folder; Claude organizes them into searchable, linked notes. Compatible with Obsidian.",
-    "long_description": "Turn one or more folders into living knowledge bases that Claude builds with you in chat. Drop in PDFs, decks, transcripts, screenshots, or notes — Claude reads them, extracts the key ideas, and files them as structured wiki pages with cross-links. Save conversations as notes, ask the wiki questions in plain English, and let Claude run autonomous research loops that file their own findings.\n\nEach knowledge folder is also a valid Obsidian vault, so you can open it in Obsidian for visual navigation, but Obsidian is not required. Optional features: auto-organize new files the moment you drop them in, and auto-snapshot every change to git so you can roll back.\n\nPackaged for Accenture sideloading. Based on the LLM Wiki pattern by Andrej Karpathy.",
+    "long_description": "Turn one or more folders into living knowledge bases that Claude builds with you in chat. Drop in PDFs, decks, transcripts, screenshots, or notes — Claude reads them, extracts the key ideas, and files them as structured wiki pages with cross-links. Save conversations as notes, ask the wiki questions in plain English, and let Claude run autonomous research loops that file their own findings.\n\nEach knowledge folder is also a valid Obsidian vault, so you can open it in Obsidian for visual navigation, but Obsidian is not required. Optional features: auto-organize new files the moment you drop them in, and auto-snapshot every change to git so you can roll back.\n\nBased on the LLM Wiki pattern by Andrej Karpathy.",
     "author": {
         "name": "Christopher Le",
-        "url": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture"
+        "url": "https://github.com/chrisle"
     },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/chrisle/personal-kb-extension"
+    },
+    "homepage": "https://github.com/chrisle/personal-kb-extension",
+    "support": "https://github.com/chrisle/personal-kb-extension/issues",
     "server": {
         "type": "node",
         "entry_point": "server/dist/index.js",
@@ -22,17 +28,12 @@
                 "OBSIDIAN_AUTO_COMMIT": "${user_config.auto_commit}",
                 "OBSIDIAN_AUTO_WATCH": "${user_config.auto_watch}",
                 "OBSIDIAN_INGEST_MODEL": "${user_config.ingest_model}",
-                "OBSIDIAN_DASHBOARD_PORT": "${user_config.dashboard_port}"
+                "OBSIDIAN_DASHBOARD_PORT": "${user_config.dashboard_port}",
+                "OBSIDIAN_OPEN_BROWSER": "${user_config.open_browser}"
             }
         }
     },
-    "repository": {
-        "type": "git",
-        "url": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture"
-    },
     "license": "MIT",
-    "homepage": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture",
-    "support": "https://dev.azure.com/genlite-azure/claude-desktop-obsidian-accenture/_git/claude-desktop-obsidian-accenture/issues",
     "tools": [
         {
             "name": "vault_scaffold",
@@ -144,8 +145,7 @@
         "second-brain",
         "vault",
         "markdown",
-        "pkm",
-        "accenture"
+        "pkm"
     ],
     "compatibility": {
         "claude_desktop": ">=0.10.0",
@@ -194,6 +194,13 @@
             "description": "Port for the dashboard server",
             "required": true,
             "default": "3737"
+        },
+        "open_browser": {
+            "type": "boolean",
+            "title": "Open browser on startup",
+            "description": "Automatically open the dashboard in a browser tab when the server starts.",
+            "required": true,
+            "default": false
         }
     }
 }
