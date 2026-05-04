@@ -104,7 +104,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.value }}
           name: v${{ steps.version.outputs.value }}
-          overwrite: true
+          overwrite_files: true
           files: |
             personal-knowledge-base-${{ steps.version.outputs.value }}.mcpb
             source-${{ steps.version.outputs.value }}.zip
