@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, type DashboardSnapshot } from "./watcher.js";
+import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, getMaintenanceEnabled, setMaintenanceEnabled, type DashboardSnapshot } from "./watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { log } from "./log.js";
 import type { VaultConfig } from "./vaults.js";
@@ -542,22 +542,52 @@ export function startDashboard(cfg: VaultConfig): void {
       }
       if (!rel) { sendJson(res, 404, { error: "Not found" }); return; }
       const full = path.join(vault, rel);
+      const pageParam = url.searchParams.get("page");
+      const pageNum = pageParam ? parseInt(pageParam, 10) : null;
+      const ext = path.extname(full).toLowerCase();
       const platform = process.platform;
-      let cmd: string;
-      let args: string[];
-      if (platform === "darwin") { cmd = "open"; args = [full]; }
-      else if (platform === "win32") { cmd = "cmd"; args = ["/c", "start", "", full]; }
-      else { cmd = "xdg-open"; args = [full]; }
-      try {
-        const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-        child.on("error", (err) => appendLog("graph", `open spawn error: ${err.message}`));
+
+      if (platform === "darwin" && pageNum && (ext === ".pptx" || ext === ".ppt")) {
+        // AppleScript: open PowerPoint and go to specific slide
+        const script = `tell application "Microsoft PowerPoint"\n  activate\n  open POSIX file "${full}"\n  delay 1\n  tell active presentation\n    set current slide to slide ${pageNum} of active presentation\n  end tell\nend tell`;
+        const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+        child.on("error", () => {
+          // Fallback: just open
+          const fb = spawn("open", [full], { detached: true, stdio: "ignore" });
+          fb.unref();
+        });
         child.unref();
-        appendLog("graph", `open ${rel} via ${cmd}`);
-        sendJson(res, 200, { ok: true, path: rel });
-      } catch (err) {
-        appendLog("graph", `open failed: ${err instanceof Error ? err.message : String(err)}`);
-        sendJson(res, 500, { error: "Spawn failed" });
+        appendLog("graph", `open ${rel} slide ${pageNum} via AppleScript`);
+      } else if (platform === "darwin" && pageNum && (ext === ".docx" || ext === ".doc")) {
+        // AppleScript: open Word and go to specific page
+        const script = `tell application "Microsoft Word"\n  activate\n  open POSIX file "${full}"\n  delay 1\n  go to active document what:=wdGoToPage which:=wdGoToAbsolute count:=${pageNum}\nend tell`;
+        const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+        child.on("error", () => {
+          const fb = spawn("open", [full], { detached: true, stdio: "ignore" });
+          fb.unref();
+        });
+        child.unref();
+        appendLog("graph", `open ${rel} page ${pageNum} via AppleScript`);
+      } else {
+        // Default: open with OS default handler (existing behavior)
+        let cmd: string;
+        let args: string[];
+        if (platform === "darwin") { cmd = "open"; args = [full]; }
+        else if (platform === "win32") { cmd = "cmd"; args = ["/c", "start", "", full]; }
+        else { cmd = "xdg-open"; args = [full]; }
+        try {
+          const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+          child.on("error", (err) => appendLog("graph", `open spawn error: ${err.message}`));
+          child.unref();
+          appendLog("graph", `open ${rel} via ${cmd}${pageNum ? ` (page ${pageNum}, no jump support for ${ext})` : ''}`);
+          sendJson(res, 200, { ok: true, path: rel });
+        } catch (err) {
+          appendLog("graph", `open failed: ${err instanceof Error ? err.message : String(err)}`);
+          sendJson(res, 500, { error: "Spawn failed" });
+        }
+        return;
       }
+      sendJson(res, 200, { ok: true, path: rel, page: pageNum });
       return;
     }
 
@@ -608,6 +638,12 @@ export function startDashboard(cfg: VaultConfig): void {
         `response: topics=${result.topics.length} items=${result.items.length} total=${Date.now() - tStart}ms`,
       );
       sendJson(res, 200, result);
+      return;
+    }
+
+    if (url.pathname === "/api/maintenance/toggle" && req.method === "POST") {
+      setMaintenanceEnabled(!getMaintenanceEnabled());
+      sendJson(res, 200, { maintenanceEnabled: getMaintenanceEnabled() });
       return;
     }
 

@@ -1,7 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Markdown, stripFrontmatter } from "@/components/markdown";
+
+// ── Source annotation helpers ─────────────────────────────────────────────────
+
+function parseSourceAnnotations(md: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const re = /^\[\^[^\]]+\]:\s+\[\[([^\]|#]+)\]\](?:\s*[—–-]\s*(.+))?$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md)) !== null) {
+    const stem = m[1].trim();
+    const annotation = m[2]?.trim() ?? "";
+    map.set(stem, annotation);
+  }
+  return map;
+}
+
+function extractPage(annotation: string): number | null {
+  const m = annotation.match(/(?:slide|page)\s+(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type EntryStatus = "queued" | "active" | "done" | "failed" | "skipped";
@@ -258,7 +277,21 @@ export default function Page() {
 
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(id); }, []);
 
-  const onWikilink = useCallback((stem: string) => { void loadByStem(stem); }, [loadByStem]);
+  const SOURCE_EXTS = useMemo(() => new Set(['docx', 'doc', 'pptx', 'ppt', 'pdf', 'xlsx', 'xls', 'png', 'jpg', 'jpeg', 'gif', 'webp']), []);
+
+  const sourceAnnotations = useMemo(() => parseSourceAnnotations(wikiBody), [wikiBody]);
+
+  const onWikilink = useCallback((stem: string) => {
+    const ext = stem.split('.').pop()?.toLowerCase() ?? '';
+    if (SOURCE_EXTS.has(ext)) {
+      const annotation = sourceAnnotations.get(stem) ?? '';
+      const page = extractPage(annotation);
+      const url = `/api/wiki/open?stem=${encodeURIComponent(stem)}${page ? `&page=${page}` : ''}`;
+      void fetch(url);
+      return;
+    }
+    void loadByStem(stem);
+  }, [loadByStem, SOURCE_EXTS, sourceAnnotations]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -274,9 +307,6 @@ export default function Page() {
         <nav className="header-nav">
           <a className="nav-btn" href="/">
             Graph
-          </a>
-          <a className="nav-btn" href="/live-notes">
-            Live Notes
           </a>
           <button
             className={`nav-btn ${panel === "queue" ? "active" : ""}`}

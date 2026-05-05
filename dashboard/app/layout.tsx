@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "Wiki ingest queue",
-  description: "Live status of the personal-knowledge-base ingest pipeline.",
+  title: "Personal Knowledge Base",
+  description: "Personal knowledge base powered by Claude.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

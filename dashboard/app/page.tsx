@@ -72,23 +72,44 @@ function colorForDomain(domain: string | undefined): string {
   return DOMAIN_PALETTE[Math.abs(h) % DOMAIN_PALETTE.length];
 }
 
-// Stable physics step. Tuned to converge without exploding even for hundreds
-// of nodes by capping forces and velocities and pruning far-away repulsion.
-const REPEL_STRENGTH = 3500;
-const REPEL_MAX_DIST = 1100;
+// Fixed physics constants (dimensionless / not layout-scale-dependent)
 const REPEL_MIN_DIST = 12;
-const SPRING_LEN = 280;
 const SPRING_K = 0.04;
 const CENTER_K = 0.0015;
-const CLUSTER_K = 0.04;          // pull same-folder nodes toward their centroid (tight clumps)
-const CLUSTER_TARGET_DIST = 1600; // desired separation between cluster centroids
-const CLUSTER_REPEL_K = 0.025;    // stiffness of the soft cluster-spread spring
-const DAMPING = 0.72;            // damping — visible motion after a drag, settles within a second
+const CLUSTER_K = 0.04;
+const CLUSTER_REPEL_K = 0.025;
+const DAMPING = 0.72;
 const VEL_CAP = 22;
-const REST_ENERGY = 0.004;       // park threshold — high enough that small jitter doesn't keep sim alive
+const REST_ENERGY = 0.004;
 
-// Label visibility thresholds
-const HUB_DEGREE = 8;
+// Scale-dependent physics params — computed from N so node density stays
+// roughly constant regardless of graph size.
+interface PhysicsParams {
+  repelStrength: number;
+  repelMaxDist: number;
+  springLen: number;
+  clusterTargetDist: number;
+}
+
+// Reference values at N_REF nodes; linear distances scale with sqrt(N/N_REF),
+// repulsion strength scales with the square of that (it acts over area).
+const N_REF = 200;
+const SPRING_LEN_BASE = 220;
+const REPEL_STRENGTH_BASE = 3000;
+const REPEL_MAX_DIST_BASE = 800;
+const CLUSTER_TARGET_DIST_BASE = 1100;
+
+function computePhysicsParams(N: number): PhysicsParams {
+  const scale = Math.max(0.5, Math.min(3.0, Math.sqrt(Math.max(N, 1) / N_REF)));
+  return {
+    repelStrength: REPEL_STRENGTH_BASE * scale * scale,
+    repelMaxDist: REPEL_MAX_DIST_BASE * scale,
+    springLen: SPRING_LEN_BASE * scale,
+    clusterTargetDist: CLUSTER_TARGET_DIST_BASE * scale,
+  };
+}
+
+// ZOOM_ALL_LABELS: show every label once the user zooms in this far
 const ZOOM_ALL_LABELS = 1.4;
 
 interface PhysNode { x: number; y: number; vx: number; vy: number; folder?: string; }
@@ -97,11 +118,12 @@ function physicsStep(
   nodes: PhysNode[],
   edges: { source: PhysNode; target: PhysNode }[],
   pinned: PhysNode | null,
+  params: PhysicsParams,
 ): void {
   const n = nodes.length;
   if (n === 0) return;
 
-  // Repulsion (O(n²), pruned by REPEL_MAX_DIST)
+  // Repulsion (O(n²), pruned by repelMaxDist)
   for (let i = 0; i < n; i++) {
     const a = nodes[i];
     for (let j = i + 1; j < n; j++) {
@@ -109,7 +131,7 @@ function physicsStep(
       let dx = a.x - b.x;
       let dy = a.y - b.y;
       let d = Math.sqrt(dx * dx + dy * dy);
-      if (d > REPEL_MAX_DIST) continue;
+      if (d > params.repelMaxDist) continue;
       if (d < REPEL_MIN_DIST) {
         // Jitter overlapping nodes apart
         if (d < 0.001) {
@@ -119,7 +141,7 @@ function physicsStep(
         }
         d = REPEL_MIN_DIST;
       }
-      const f = REPEL_STRENGTH / (d * d);
+      const f = params.repelStrength / (d * d);
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       a.vx += fx; a.vy += fy;
@@ -132,7 +154,7 @@ function physicsStep(
     const dx = e.target.x - e.source.x;
     const dy = e.target.y - e.source.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-    const f = (d - SPRING_LEN) * SPRING_K;
+    const f = (d - params.springLen) * SPRING_K;
     const fx = (dx / d) * f;
     const fy = (dy / d) * f;
     e.source.vx += fx; e.source.vy += fy;
@@ -191,8 +213,8 @@ function physicsStep(
         dy = Math.random() - 0.5;
         d = Math.sqrt(dx * dx + dy * dy) || 1;
       }
-      if (d >= CLUSTER_TARGET_DIST) continue;
-      const fmag = (CLUSTER_TARGET_DIST - d) * CLUSTER_REPEL_K;
+      if (d >= params.clusterTargetDist) continue;
+      const fmag = (params.clusterTargetDist - d) * CLUSTER_REPEL_K;
       const fx = (dx / d) * fmag;
       const fy = (dy / d) * fmag;
       for (const m of membersA) { m.vx += fx; m.vy += fy; }
@@ -226,7 +248,6 @@ export default function GraphPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [hover, setHover] = useState<SimNode | null>(null);
-  const [minDegree, setMinDegree] = useState(0);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<SimNode | null>(null);
   const [pageContent, setPageContent] = useState<string>("");
@@ -247,6 +268,10 @@ export default function GraphPage() {
   const sizeRef = useRef({ w: 800, h: 600 });
   const searchRef = useRef("");
   const positionCacheRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const physicsParamsRef = useRef<PhysicsParams>(computePhysicsParams(N_REF));
+  // Dynamic label threshold: only the top ~5% of nodes (min 15) show labels when zoomed out.
+  // Stored in a ref so the render loop reads the latest value without re-subscribing.
+  const hubDegreeRef = useRef(8);
 
   // Keep refs in sync with state so the render loop can read them without re-subscribing
   useEffect(() => { searchRef.current = search.trim().toLowerCase(); }, [search]);
@@ -278,14 +303,15 @@ export default function GraphPage() {
   // so adjusting the filter doesn't reset everything to the spiral.
   useEffect(() => {
     if (!data) return;
-    const visibleNodes = data.nodes.filter((n) => n.degree >= minDegree);
-    const visibleIds = new Set(visibleNodes.map((n) => n.id));
-    const visibleEdges = data.edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+    const visibleNodes = data.nodes;
+    const visibleEdges = data.edges;
 
     const byId = new Map<string, SimNode>();
     const N = visibleNodes.length;
+    const params = computePhysicsParams(N);
+    physicsParamsRef.current = params;
     const golden = Math.PI * (3 - Math.sqrt(5));
-    const spread = Math.max(200, Math.sqrt(Math.max(N, 1)) * 60);
+    const spread = Math.max(params.springLen * 2, Math.sqrt(Math.max(N, 1)) * params.springLen * 0.5);
     const cache = positionCacheRef.current;
     const hadCache = cache.size > 0;
 
@@ -305,7 +331,7 @@ export default function GraphPage() {
         ...n,
         x, y,
         vx: 0, vy: 0,
-        r: 3 + Math.min(15, Math.sqrt(n.degree) * 2.2),
+        r: 2 + Math.min(8, Math.sqrt(n.degree) * 1.1),
         color: colorForDomain(folder),
         folder,
       };
@@ -321,6 +347,12 @@ export default function GraphPage() {
     simNodesRef.current = sim;
     simEdgesRef.current = edges;
 
+    // Dynamic label threshold: top ~5% of nodes by degree get permanent labels,
+    // so the zoomed-out view stays legible regardless of how many nodes there are.
+    const labelCount = Math.max(15, Math.min(50, Math.floor(N * 0.05)));
+    const sorted = [...sim].sort((a, b) => b.degree - a.degree);
+    hubDegreeRef.current = sorted[Math.min(labelCount, sorted.length - 1)]?.degree ?? 8;
+
     // Pre-warm: run silent steps until kinetic energy is negligible, then freeze.
     // Cached positions converge fast; cold starts need more iterations.
     const maxSteps = hadCache
@@ -329,7 +361,7 @@ export default function GraphPage() {
     const minSteps = hadCache ? 30 : Math.min(200, maxSteps);
     const energyThreshold = 0.05;
     for (let s = 0; s < maxSteps; s++) {
-      physicsStep(sim, edges, null);
+      physicsStep(sim, edges, null, params);
       if (s >= minSteps) {
         let energy = 0;
         for (const node of sim) energy += node.vx * node.vx + node.vy * node.vy;
@@ -365,7 +397,7 @@ export default function GraphPage() {
     } else if (sim.length === 0) {
       cameraRef.current = { x: 0, y: 0, zoom: 1 };
     }
-  }, [data, minDegree]);
+  }, [data]);
 
   // Resize canvas to container
   useEffect(() => {
@@ -420,7 +452,7 @@ export default function GraphPage() {
           for (const node of nodes) energy += node.vx * node.vx + node.vy * node.vy;
           const avgEnergy = energy / nodes.length;
           if (avgEnergy > REST_ENERGY) {
-            physicsStep(nodes, edges, null);
+            physicsStep(nodes, edges, null, physicsParamsRef.current);
           } else {
             for (const node of nodes) { node.vx = 0; node.vy = 0; }
           }
@@ -521,7 +553,7 @@ export default function GraphPage() {
         }
         for (const node of nodes) {
           const isHi = highlightSet.has(node);
-          const isHubNode = node.degree >= HUB_DEGREE;
+          const isHubNode = node.degree >= hubDegreeRef.current;
           const isHiNbr = highlightConnected.has(node);
           const isMatch = hasQuery && matchSet.has(node);
           const isMatchNbr = hasQuery && neighborSet.has(node);
@@ -708,22 +740,11 @@ export default function GraphPage() {
     setPageContent("");
   }, []);
 
-  const visibleCount = data ? data.nodes.filter((n) => n.degree >= minDegree).length : 0;
-  const visibleEdgeCount = data
-    ? data.edges.filter((e) => {
-        const s = data.nodes.find((n) => n.id === e.source);
-        const t = data.nodes.find((n) => n.id === e.target);
-        return s && t && s.degree >= minDegree && t.degree >= minDegree;
-      }).length
-    : 0;
-
-  // Legend: list of folders currently visible, each with a swatch + count.
-  // Sorted by count desc so the largest categories come first.
+  // Legend: list of folders, sorted by count desc.
   const legend = useMemo(() => {
     if (!data) return [] as { folder: string; count: number; color: string }[];
     const counts = new Map<string, number>();
     for (const n of data.nodes) {
-      if (n.degree < minDegree) continue;
       const f = topFolder(n.id);
       if (f === "_root") continue;
       counts.set(f, (counts.get(f) ?? 0) + 1);
@@ -731,7 +752,7 @@ export default function GraphPage() {
     return Array.from(counts.entries())
       .map(([folder, count]) => ({ folder, count, color: colorForDomain(folder) }))
       .sort((a, b) => b.count - a.count);
-  }, [data, minDegree]);
+  }, [data]);
 
   return (
     <div className="graph-page">
@@ -739,13 +760,14 @@ export default function GraphPage() {
         <a className="header-title-btn" href="/">Personal Knowledge Base</a>
         <nav className="header-nav">
           <a className="nav-btn" href="/wiki">Wiki</a>
-          <a className="nav-btn" href="/live-notes">Live Notes</a>
+          <a className="nav-btn" href="/queue">Queue</a>
+          <a className="nav-btn" href="/log">Log</a>
         </nav>
       </header>
 
       <div className="graph-toolbar">
         <span className="graph-stats">
-          {data ? `${visibleCount} / ${data.nodes.length} pages · ${visibleEdgeCount} links` : loading ? "Loading…" : ""}
+          {data ? `${data.nodes.length} pages · ${data.edges.length} links` : loading ? "Loading…" : ""}
         </span>
         <input
           className="graph-search"
@@ -754,21 +776,16 @@ export default function GraphPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <label className="graph-filter">
-          <span>Min links</span>
-          <input
-            type="range"
-            min={0}
-            max={10}
-            value={minDegree}
-            onChange={(e) => setMinDegree(Number(e.target.value))}
-          />
-          <span className="graph-filter-val">{minDegree}</span>
-        </label>
       </div>
 
       <div className="graph-canvas-wrap" ref={containerRef}>
         {error && <div className="graph-error">{error}</div>}
+        {loading && !data && !error && (
+          <div className="graph-loading">
+            <div className="graph-loading-spinner" />
+            <span className="graph-loading-label">Building graph…</span>
+          </div>
+        )}
         {!error && data && data.nodes.length === 0 && (
           <div className="graph-empty">No wiki pages yet. Drop a file into your vault to start building the graph.</div>
         )}

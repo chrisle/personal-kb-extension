@@ -18,7 +18,7 @@ const EXCLUDED_DIRS = new Set([
 
 const HIDDEN_PREFIX = ".";
 
-type Event = "add" | "change" | "unlink";
+type Event = "add" | "change" | "unlink" | "maintenance";
 type EntryStatus = "queued" | "active" | "done" | "failed" | "skipped";
 
 interface QueueEntry {
@@ -41,6 +41,11 @@ const recent: QueueEntry[] = [];
 const RECENT_MAX = 50;
 let nextEntryId = 1;
 let running = false;
+let maintenanceEnabled = !["0", "false", "no", "off"].includes(
+  (process.env.OBSIDIAN_MAINTENANCE_ENABLED ?? "true").toLowerCase()
+);
+const maintenancePending = new Set<string>(); // vault paths with pending maintenance
+const scheduledVaults: string[] = [];
 
 const dashboardEvents = new EventEmitter();
 
@@ -78,6 +83,7 @@ export interface DashboardSnapshot {
   recent: QueueEntry[];
   concurrency: number;
   updatedAt: number;
+  maintenanceEnabled: boolean;
 }
 
 export function getDashboardState(): DashboardSnapshot {
@@ -87,6 +93,7 @@ export function getDashboardState(): DashboardSnapshot {
     recent: recent.map((e) => ({ ...e })),
     concurrency: CONCURRENCY,
     updatedAt: Date.now(),
+    maintenanceEnabled,
   };
 }
 
@@ -94,6 +101,12 @@ export function subscribeDashboard(listener: (snapshot: DashboardSnapshot) => vo
   const handler = () => listener(getDashboardState());
   dashboardEvents.on("change", handler);
   return () => dashboardEvents.off("change", handler);
+}
+
+export function getMaintenanceEnabled(): boolean { return maintenanceEnabled; }
+export function setMaintenanceEnabled(enabled: boolean): void {
+  maintenanceEnabled = enabled;
+  notifyDashboard();
 }
 
 function notifyDashboard(): void {
@@ -165,6 +178,19 @@ export function startVaultWatchers(vaults: string[], enabled: boolean): void {
   for (const vault of vaults) {
     void setupVault(vault);
   }
+  scheduledVaults.push(...vaults);
+  startMaintenanceScheduler();
+}
+
+function startMaintenanceScheduler(): void {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000;
+  setInterval(() => {
+    if (!maintenanceEnabled) return;
+    if (active.length > 0 || queue.length > 0) return;
+    for (const vault of scheduledVaults) {
+      enqueueMaintenance(vault);
+    }
+  }, INTERVAL_MS);
 }
 
 async function setupVault(vault: string): Promise<void> {
@@ -288,6 +314,25 @@ function enqueue(vault: string, filePath: string, event: Event): void {
   void drain();
 }
 
+function enqueueMaintenance(vault: string): void {
+  if (!maintenanceEnabled) return;
+  if (maintenancePending.has(vault)) return;
+  if (active.some((e) => e.event === "maintenance")) return;
+  if (queue.some((e) => e.vault === vault && e.event === "maintenance")) return;
+  maintenancePending.add(vault);
+  queue.push({
+    id: String(nextEntryId++),
+    vault,
+    rel: "[maintenance]",
+    event: "maintenance",
+    status: "queued",
+    enqueuedAt: Date.now(),
+  });
+  logLine(vault, `maintenance pass queued`);
+  notifyDashboard();
+  void drain();
+}
+
 const CONCURRENCY = 5;
 
 async function drain(): Promise<void> {
@@ -295,6 +340,7 @@ async function drain(): Promise<void> {
   running = true;
   let completed = 0;
   let lastVault = "";
+  let hadIngestEntries = false;
   try {
     const inFlight = new Set<Promise<void>>();
 
@@ -305,17 +351,18 @@ async function drain(): Promise<void> {
         entry.startedAt = Date.now();
         active.push(entry);
         lastVault = entry.vault;
-        const mtime = entry.event !== "unlink"
+        if (entry.event !== "maintenance") hadIngestEntries = true;
+        const mtime = entry.event !== "unlink" && entry.event !== "maintenance"
           ? (fs.statSync(path.join(entry.vault, entry.rel), { throwIfNoEntry: false })?.mtimeMs ?? 0)
           : 0;
         logLine(entry.vault, `start [${active.length}/${CONCURRENCY}] ${entry.event} ${entry.rel} [${queue.length} queued]`);
         notifyDashboard();
-        const p: Promise<void> = runIngest(entry).then((code) => {
+        const p: Promise<void> = (entry.event === "maintenance" ? runMaintenance(entry) : runIngest(entry)).then((code) => {
           entry.exitCode = code ?? null;
           entry.endedAt = Date.now();
           if (code === 0) {
             entry.status = "done";
-            if (entry.event !== "unlink" && mtime > 0) {
+            if (entry.event !== "unlink" && entry.event !== "maintenance" && mtime > 0) {
               saveIngestEntry(entry.vault, entry.rel, mtime);
             }
           } else if (code === null) {
@@ -349,6 +396,9 @@ async function drain(): Promise<void> {
     }
   } finally {
     running = false;
+  }
+  if (hadIngestEntries && lastVault) {
+    enqueueMaintenance(lastVault);
   }
 }
 
@@ -453,7 +503,39 @@ const DISCOVER_RULE = `LINK DISCOVERY (run BEFORE writing any page):
 4. Bidirectional update: for each existing page B you link to from a new page A, append "- [[A-stem]] — <one-line why>" under B's "## Related" section (create the section if missing). This is what makes the graph dense.
 5. If kb_query returns nothing for a term, that's expected on a fresh vault — just skip linking for that term.`;
 
-const WRITE_RULE = `Write every wiki page under wiki/<type-folder>/<domain>/<slug>.md (e.g. wiki/concepts/clearance/risk-rating.md). vault_write rejects single-segment writes at wiki/ root. Allowed at root: index.md, log.md, hot.md, overview.md, README.md. Domain hub pages live at wiki/domains/<slug>.md. After writing, call kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md. Use WIKI.md as the schema reference.`;
+const WRITE_RULE = `NEVER use the native Write or Edit tools to create or modify wiki files — they bypass schema validation and will produce invalid paths. ONLY use vault_write for all wiki writes.
+Write every wiki page under wiki/<type-folder>/<domain>/<slug>.md (e.g. wiki/concepts/clearance/risk-rating.md). vault_write rejects single-segment writes at wiki/ root. Allowed at root: index.md, log.md, hot.md, overview.md, README.md. Domain hub pages live at wiki/domains/<slug>.md. After writing, call kb_reindex to rebuild wiki/index.md and wiki/index/<domain>.md. Use WIKI.md as the schema reference.`;
+
+const MAINTENANCE_PROMPT = [
+  `kb-maintenance (automated pass)`,
+  ``,
+  SCOPE_RULE,
+  ``,
+  `NEVER use the native Write or Edit tools — ONLY vault_write for all wiki writes.`,
+  ``,
+  `Run these checks in order, then stop. Be conservative.`,
+  ``,
+  `1. DUPLICATE SLUGS`,
+  `   Read wiki/index.md to get the full page list. Normalize each page's slug: lowercase the`,
+  `   basename (without .md), replace spaces and underscores with hyphens.`,
+  `   For any two pages sharing the same normalized slug, add a line under "## Duplicate Pages"`,
+  `   in wiki/meta/_global/maintenance.md (create it via vault_write if missing, with frontmatter`,
+  `   type: meta, title: Maintenance Log, domain: _global):`,
+  `     - [[<stem-a>]] ↔ [[<stem-b>]] — duplicate slug, detected <today's date>`,
+  `   Do NOT merge pages automatically.`,
+  ``,
+  `2. SCHEMA VIOLATIONS`,
+  `   Run: find wiki -maxdepth 1 -name "*.md" to list files at wiki root depth.`,
+  `   Any .md file whose name is NOT in [index.md, log.md, hot.md, overview.md, README.md,`,
+  `   maintenance.md] is a schema violation (should be at wiki/<type>/<domain>/<slug>.md).`,
+  `   Add it under "## Schema Violations" in wiki/meta/_global/maintenance.md:`,
+  `     - wiki/<file>.md — misplaced root file, expected wiki/<type>/<domain>/<slug>.md`,
+  `   Do NOT move files automatically.`,
+  ``,
+  `3. Run kb_reindex.`,
+  ``,
+  `Only write to wiki/meta/_global/maintenance.md. Do not modify any other wiki pages.`,
+].join("\n");
 
 const IMAGE_INGEST_RULE = `When extracting from the image:
 1. Transcribe ALL readable text verbatim. Preserve structure: headings stay headings, lists stay lists, tables stay tables (use markdown table syntax).
@@ -464,6 +546,46 @@ const IMAGE_INGEST_RULE = `When extracting from the image:
 3. The image is the source. File it as a 'source' page at wiki/sources/<domain>/<slug>.md with sections: ## Transcribed Text, ## Diagrams, ## Summary.
 4. Then extract concept/entity/question pages from the content as you would for any source — each gets the same domain.`;
 
+async function runMaintenance(entry: QueueEntry): Promise<number | null> {
+  maintenancePending.delete(entry.vault);
+  const bin = resolveClaudeBin();
+  const model = (process.env.OBSIDIAN_INGEST_MODEL ?? "claude-sonnet-4-6").trim();
+  const args = ["--model", model, "--disallowedTools", "Write,Edit,NotebookEdit", "-p", MAINTENANCE_PROMPT];
+  const startMs = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, {
+      cwd: entry.vault,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
+      env: {
+        ...process.env,
+        PATH: [
+          process.env.PATH,
+          path.dirname(process.execPath),
+          ...(process.platform === "darwin" ? ["/opt/homebrew/bin", "/usr/local/bin"] : []),
+        ].filter(Boolean).join(path.delimiter),
+      },
+    });
+    const onChunk = (stream: "stdout" | "stderr") => (buf: Buffer) => {
+      for (const line of buf.toString("utf8").split(/\r?\n/)) {
+        if (line.trim()) logLine(entry.vault, `[${stream}] maintenance: ${line}`);
+      }
+    };
+    child.stdout?.on("data", onChunk("stdout"));
+    child.stderr?.on("data", onChunk("stderr"));
+    child.on("error", (err) => {
+      logLine(entry.vault, `maintenance spawn failed: ${err.message}`);
+      resolve(null);
+    });
+    child.on("exit", (code, signal) => {
+      const elapsed = Date.now() - startMs;
+      const status = code === 0 ? "done" : `failed (exit ${code ?? signal})`;
+      logLine(entry.vault, `maintenance ${status} [${elapsed}ms]`);
+      resolve(code);
+    });
+  });
+}
+
 async function runIngest(entry: QueueEntry): Promise<number | null> {
   if (entry.event !== "unlink" && !isIngestible(entry.rel)) {
     logLine(entry.vault, `skip ${entry.rel} (unsupported file type)`);
@@ -472,10 +594,17 @@ async function runIngest(entry: QueueEntry): Promise<number | null> {
 
   let extractedText: string | undefined;
   if (entry.event !== "unlink" && isOfficeFile(entry.rel)) {
+    const ext = path.extname(entry.rel).toLowerCase();
+    // Old binary OLE2 formats (.doc, .ppt) can't be parsed with JSZip-based
+    // extraction — only the modern ZIP-based formats (.docx, .pptx) work.
+    if (ext === ".doc" || ext === ".ppt") {
+      logLine(entry.vault, `skip ${entry.rel} (legacy Office format — save as ${ext === ".doc" ? ".docx" : ".pptx"} to ingest)`);
+      return null;
+    }
     const filePath = path.join(entry.vault, entry.rel);
     const text = await extractText(filePath);
     if (text === null) {
-      logLine(entry.vault, `skip ${entry.rel} (text extraction failed — file may be corrupt or encrypted)`);
+      logLine(entry.vault, `skip ${entry.rel} (text extraction failed — file may be corrupt or password-protected)`);
       return null;
     }
     logLine(entry.vault, `extracted ${text.length} chars from ${entry.rel}`);
@@ -486,7 +615,7 @@ async function runIngest(entry: QueueEntry): Promise<number | null> {
     const bin = resolveClaudeBin();
     const prompt = buildPrompt(entry.event, entry.rel, extractedText);
     const model = (process.env.OBSIDIAN_INGEST_MODEL ?? "claude-sonnet-4-6").trim();
-    const args = ["--model", model, "-p", prompt];
+    const args = ["--model", model, "--disallowedTools", "Write,Edit,NotebookEdit", "-p", prompt];
     const startMs = Date.now();
     const child = spawn(bin, args, {
       cwd: entry.vault,

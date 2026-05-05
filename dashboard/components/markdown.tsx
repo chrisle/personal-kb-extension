@@ -23,8 +23,11 @@ export function renderInline(
     if (wm) {
       const stem = wm[1].trim();
       const display = wm[2]?.trim() || stem;
+      const dotIdx = stem.lastIndexOf(".");
+      const ext = dotIdx !== -1 ? stem.slice(dotIdx + 1).toLowerCase() : "";
+      const isSource = dotIdx !== -1 && ext !== "md";
       parts.push(
-        <span key={k++} className="wiki-link" onClick={() => onWikilink(stem, display)}>
+        <span key={k++} className={isSource ? "wiki-link-source" : "wiki-link"} onClick={() => onWikilink(stem, display)}>
           {display}
         </span>,
       );
