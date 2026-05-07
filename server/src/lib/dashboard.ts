@@ -4,7 +4,8 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, getMaintenanceEnabled, setMaintenanceEnabled, type DashboardSnapshot } from "./watcher.js";
+import { getDashboardState, subscribeDashboard, getLogLines, subscribeLogLine, appendLog, getMaintenanceEnabled, setMaintenanceEnabled, cancelJob, retryJob, getMaxRetries, setMaxRetries, getRetryOnFailure, setRetryOnFailure, type DashboardSnapshot } from "./watcher.js";
+import { resolveClaudeBin } from "./claude-bin.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { log } from "./log.js";
 import type { VaultConfig } from "./vaults.js";
@@ -445,6 +446,63 @@ async function suggestFromTranscript(vault: string, transcript: string): Promise
   return { topics, items };
 }
 
+// ── Meeting extraction (Claude-powered) ─────────────────────────────────────
+
+interface MeetingExtract {
+  minutes: string[];
+  topics: string[];
+  actions: string[];
+}
+
+async function callClaudeJson<T>(prompt: string): Promise<T> {
+  const bin = resolveClaudeBin();
+  const args = ["--model", "claude-sonnet-4-6", "--output-format", "json", "-p", prompt];
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    child.stdout?.on("data", (buf: Buffer) => chunks.push(buf));
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code !== 0) { reject(new Error(`claude exited ${code}`)); return; }
+      try {
+        const raw = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { result?: string };
+        resolve(JSON.parse(raw.result ?? "{}") as T);
+      } catch (e) {
+        reject(new Error(`parse error: ${e}`));
+      }
+    });
+  });
+}
+
+async function extractMeetingData(transcript: string): Promise<MeetingExtract> {
+  const prompt = `You are a concise meeting note-taker. Given this transcript, return ONLY a JSON object — no explanation, no markdown fences:
+{
+  "minutes": ["one sentence per topic discussed, in chronological order"],
+  "topics": ["3-6 key nouns or short phrases suitable as knowledge-base search queries"],
+  "actions": ["concrete tasks with owner and deadline if stated — empty array if none"]
+}
+
+Rules:
+- minutes: 3-8 entries, each a single clear past-tense sentence
+- topics: nouns/phrases only, no verbs
+- actions: only explicit commitments or tasks; omit vague statements
+
+Transcript:
+${transcript.slice(-3000)}`;
+
+  try {
+    const result = await callClaudeJson<MeetingExtract>(prompt);
+    return {
+      minutes: Array.isArray(result.minutes) ? result.minutes : [],
+      topics:  Array.isArray(result.topics)  ? result.topics  : [],
+      actions: Array.isArray(result.actions) ? result.actions : [],
+    };
+  } catch (e) {
+    appendLog("live-notes", `extractMeetingData error: ${e}`);
+    return { minutes: [], topics: [], actions: [] };
+  }
+}
+
 // ── Server ──────────────────────────────────────────────────────────────────
 
 export function startDashboard(cfg: VaultConfig): void {
@@ -641,9 +699,63 @@ export function startDashboard(cfg: VaultConfig): void {
       return;
     }
 
+    if (url.pathname === "/api/meeting/extract") {
+      if (req.method !== "POST") { sendText(res, 405, "POST required"); return; }
+      let body = "";
+      try { body = await readBody(req); } catch { sendJson(res, 413, { error: "Payload too large" }); return; }
+      let transcript = "";
+      try {
+        const parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+        transcript = String(parsed.transcript ?? "").trim();
+      } catch { sendJson(res, 400, { error: "Invalid JSON" }); return; }
+      if (!transcript) { sendJson(res, 200, { minutes: [], topics: [], actions: [] }); return; }
+      appendLog("live-notes", `meeting/extract: ${transcript.length} chars`);
+      const tStart = Date.now();
+      const result = await extractMeetingData(transcript);
+      appendLog("live-notes", `meeting/extract done: minutes=${result.minutes.length} topics=${result.topics.length} actions=${result.actions.length} [${Date.now() - tStart}ms]`);
+      sendJson(res, 200, result);
+      return;
+    }
+
     if (url.pathname === "/api/maintenance/toggle" && req.method === "POST") {
       setMaintenanceEnabled(!getMaintenanceEnabled());
       sendJson(res, 200, { maintenanceEnabled: getMaintenanceEnabled() });
+      return;
+    }
+
+    // Queue job controls
+    const queueMatch = url.pathname.match(/^\/api\/queue\/([^/]+)\/(cancel|retry)$/);
+    if (queueMatch && req.method === "POST") {
+      const [, id, action] = queueMatch;
+      const ok = action === "cancel" ? cancelJob(id) : retryJob(id);
+      sendJson(res, ok ? 200 : 404, { ok });
+      return;
+    }
+
+    // Settings
+    if (url.pathname === "/api/settings" && req.method === "GET") {
+      sendJson(res, 200, {
+        maxRetries: getMaxRetries(),
+        retryOnFailure: getRetryOnFailure(),
+        maintenanceEnabled: getMaintenanceEnabled(),
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/settings" && req.method === "POST") {
+      let body = "";
+      try { body = await readBody(req); } catch { sendJson(res, 413, { error: "Payload too large" }); return; }
+      try {
+        const parsed = JSON.parse(body || "{}") as Record<string, unknown>;
+        if (typeof parsed.maxRetries === "number") setMaxRetries(parsed.maxRetries);
+        if (typeof parsed.retryOnFailure === "boolean") setRetryOnFailure(parsed.retryOnFailure);
+        if (typeof parsed.maintenanceEnabled === "boolean") setMaintenanceEnabled(parsed.maintenanceEnabled);
+      } catch { sendJson(res, 400, { error: "Invalid JSON" }); return; }
+      sendJson(res, 200, {
+        maxRetries: getMaxRetries(),
+        retryOnFailure: getRetryOnFailure(),
+        maintenanceEnabled: getMaintenanceEnabled(),
+      });
       return;
     }
 

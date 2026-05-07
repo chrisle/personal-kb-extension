@@ -32,6 +32,7 @@ interface QueueEntry {
   endedAt?: number;
   exitCode?: number | null;
   message?: string;
+  retries?: number;  // number of retry attempts so far
 }
 
 const watchers: FSWatcher[] = [];
@@ -41,6 +42,8 @@ const recent: QueueEntry[] = [];
 const RECENT_MAX = 50;
 let nextEntryId = 1;
 let running = false;
+let maxRetries = 0;
+let retryOnFailure = false;
 let maintenanceEnabled = !["0", "false", "no", "off"].includes(
   (process.env.OBSIDIAN_MAINTENANCE_ENABLED ?? "true").toLowerCase()
 );
@@ -107,6 +110,44 @@ export function getMaintenanceEnabled(): boolean { return maintenanceEnabled; }
 export function setMaintenanceEnabled(enabled: boolean): void {
   maintenanceEnabled = enabled;
   notifyDashboard();
+}
+
+export function getMaxRetries(): number { return maxRetries; }
+export function setMaxRetries(n: number): void { maxRetries = Math.max(0, Math.floor(n)); }
+export function getRetryOnFailure(): boolean { return retryOnFailure; }
+export function setRetryOnFailure(v: boolean): void { retryOnFailure = v; }
+
+export function cancelJob(id: string): boolean {
+  const qi = queue.findIndex(e => e.id === id);
+  if (qi >= 0) {
+    const [entry] = queue.splice(qi, 1);
+    entry.status = "skipped";
+    entry.endedAt = Date.now();
+    pushRecent(entry);
+    notifyDashboard();
+    return true;
+  }
+  return false;
+}
+
+export function retryJob(id: string): boolean {
+  const ri = recent.findIndex(e => e.id === id && e.status === "failed");
+  if (ri < 0) return false;
+  const entry = recent[ri];
+  recent.splice(ri, 1);
+  const retried: QueueEntry = {
+    ...entry,
+    status: "queued",
+    enqueuedAt: Date.now(),
+    startedAt: undefined,
+    endedAt: undefined,
+    exitCode: undefined,
+    retries: (entry.retries ?? 0) + 1,
+  };
+  queue.push(retried);
+  notifyDashboard();
+  void drain();
+  return true;
 }
 
 function notifyDashboard(): void {
@@ -377,9 +418,18 @@ async function drain(): Promise<void> {
         }).finally(() => {
           inFlight.delete(p);
           removeFromActive(entry.id);
-          pushRecent(entry);
-          completed++;
-          notifyDashboard();
+          if (entry.status === "failed" && retryOnFailure && maxRetries > 0 && (entry.retries ?? 0) < maxRetries) {
+            entry.status = "queued";
+            entry.retries = (entry.retries ?? 0) + 1;
+            entry.startedAt = undefined;
+            entry.endedAt = undefined;
+            queue.push(entry);
+            notifyDashboard();
+          } else {
+            pushRecent(entry);
+            completed++;
+            notifyDashboard();
+          }
         });
         inFlight.add(p);
       }
