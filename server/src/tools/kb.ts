@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ensureVaultExists, kbDir, resolveVault, type VaultConfig } from "../lib/vaults.js";
 import { log } from "../lib/log.js";
@@ -39,7 +40,7 @@ export const kbTools: Tool[] = [
   {
     name: "kb_search",
     description:
-      "Search the knowledge base for pages matching a query. Returns results formatted like a web search — title, wikilink, path, and a one-line snippet — ranked by relevance. When you use these results to answer a question, cite each fact back to its source page (use the `[[stem]]` wikilink shown in the result, or the full path).",
+      "Search the knowledge base for pages matching a query. Returns results formatted like a web search — title, link, path, and a one-line snippet — ranked by relevance. When you use these results to answer a question, cite each fact back to its source page using the markdown file:// link shown in the result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -214,12 +215,13 @@ async function search(cfg: VaultConfig, args: Record<string, unknown>) {
   const lines = top.map((r, i) => {
     const rel = path.relative(vault, r.file).replace(/\\/g, "/");
     const stem = path.basename(r.file, ".md");
-    return `${i + 1}. **${r.title}** [[${stem}]]\n   ${rel}\n   ${r.snippet || "(no snippet)"}`;
+    const url = pathToFileURL(r.file).href;
+    return `${i + 1}. **${r.title}** [${stem}](${url})\n   ${rel}\n   ${r.snippet || "(no snippet)"}`;
   });
 
   return textResult(
     `Search results for "${q}" (${top.length}):\n\n${lines.join("\n\n")}\n\n` +
-    `When you use any of the above to answer, cite the source page using its [[stem]] wikilink or full path.`,
+    `When you use any of the above to answer, cite the source page using a markdown link with its file:// URL.`,
   );
 }
 
