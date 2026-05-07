@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Markdown, stripFrontmatter } from "@/components/markdown";
+import { AppHeader } from "@/components/AppHeader";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface GraphNode {
@@ -756,14 +757,7 @@ export default function GraphPage() {
 
   return (
     <div className="graph-page">
-      <header className="app-header">
-        <a className="header-title-btn" href="/">Personal Knowledge Base</a>
-        <nav className="header-nav">
-          <a className="nav-btn" href="/wiki">Wiki</a>
-          <a className="nav-btn" href="/queue">Queue</a>
-          <a className="nav-btn" href="/log">Log</a>
-        </nav>
-      </header>
+      <AppHeader />
 
       <div className="graph-toolbar">
         <span className="graph-stats">

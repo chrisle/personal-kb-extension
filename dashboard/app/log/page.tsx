@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppHeader } from "@/components/AppHeader";
 
 function classifyLine(line: string): string {
   const lower = line.toLowerCase();
@@ -64,14 +65,7 @@ export default function LogPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <header className="app-header">
-        <a className="header-title-btn" href="/">Personal Knowledge Base</a>
-        <nav className="header-nav">
-          <a className="nav-btn" href="/wiki">Wiki</a>
-          <a className="nav-btn" href="/queue">Queue</a>
-          <a className="nav-btn active" href="/log">Log</a>
-        </nav>
-      </header>
+      <AppHeader active="log" />
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 20px", borderBottom: "1px solid var(--border)", background: "var(--panel)", flexShrink: 0 }}>
         <span className="status-pill" style={{ fontSize: 12 }}>
