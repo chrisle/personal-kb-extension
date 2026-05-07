@@ -557,6 +557,7 @@ export default function LiveNotesPage() {
       <header className="ln-header">
         <a href="/wiki" className="ln-back">← Wiki</a>
         <h1 className="ln-title">Live Notes</h1>
+        <a href="/meeting" className="ln-back" style={{ marginLeft: "auto" }}>Meeting →</a>
         <div className="ln-header-spacer" />
         <div className="ln-controls">
           <div className="ln-device-wrap">

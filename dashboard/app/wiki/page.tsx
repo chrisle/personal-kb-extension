@@ -308,6 +308,7 @@ export default function Page() {
           <a className="nav-btn" href="/">
             Graph
           </a>
+          <a className="nav-btn" href="/meeting">Meeting</a>
           <button
             className={`nav-btn ${panel === "queue" ? "active" : ""}`}
             onClick={() => togglePanel("queue")}
